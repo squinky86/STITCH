@@ -54,7 +54,7 @@ struct WeaknessRelationship {
 
 const CWE_XML_URL: &str = "https://cwe.mitre.org/data/xml/cwec_latest.xml.zip";
 const TEMP_ZIP_FILE: &str = "cwec_latest.xml.zip";
-const TEMP_XML_FILE: &str = "cwec_v4.18.xml";
+const TEMP_XML_FILE: &str = "cwec_latest.xml";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -135,18 +135,25 @@ fn extract_xml_from_zip(args: &Args) -> Result<()> {
 	let file = File::open(TEMP_ZIP_FILE).context("Failed to open zip file")?;
 	let mut archive = ZipArchive::new(file).context("Failed to read zip archive")?;
 
-	if let Some(mut file) = archive.by_name(TEMP_XML_FILE).ok() {
-		if args.verbose {
-			println!("\nExtracting: {}", file.name());
+	if args.verbose {
+		println!("\nExtracting: {}", TEMP_ZIP_FILE);
+	}
+
+	for i in 0..archive.len() {
+		match archive.by_index(i) {
+			Ok(mut file) => {
+				if file.name().ends_with(".xml") {
+					let mut xml_file =
+						File::create(TEMP_XML_FILE).context("Failed to create XML file")?;
+					std::io::copy(&mut file, &mut xml_file).context("Failed to extract XML file")?;
+				}
+			}
+			Err(_) => {
+				return Err(anyhow::anyhow!(
+					"Could not extract file index {} in the downloaded zip file.", i.to_string()
+				));
+			}
 		}
-		let mut xml_file =
-			File::create(TEMP_XML_FILE).context("Failed to create XML file")?;
-		std::io::copy(&mut file, &mut xml_file)
-			.context("Failed to extract XML file")?;
-	} else {
-		return Err(anyhow::anyhow!(
-			"Could not find '{}' in the downloaded zip file.", TEMP_XML_FILE
-		));
 	}
 
 	Ok(())
