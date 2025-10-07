@@ -30,15 +30,11 @@ cargo build --release
 
 # Force re-download even if XML exists
 ./target/release/RuskTeX --force
-
-# Keep XML files after processing
-./target/release/RuskTeX --keep-xml
 ```
 
 ### Command-line options
 - `-o, --output <FILE>`: Output database file path (default: cwe_database.db)
 - `-f, --force`: Force download even if XML file exists
-- `-k, --keep-xml`: Keep downloaded XML file after processing
 - `-v, --verbose`: Enable verbose output
 - `-h, --help`: Show help information
 
@@ -70,6 +66,7 @@ WHERE r.source_id = '89' AND r.nature = 'ChildOf';
 - `clap` - Command line parsing
 - `anyhow` - Error handling
 - `zip` - Archive extraction
+- `tempfile` - Temporary file handling
 
 ## Error Handling
 

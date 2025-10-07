@@ -5,11 +5,10 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 use reqwest::Client;
 use rusqlite::{params, Connection};
-use std::fs::File;
 use std::io::Write;
-use std::path::Path;
 use tokio::fs;
 use zip::ZipArchive;
+use tempfile::NamedTempFile;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -21,10 +20,6 @@ struct Args {
 	/// Force download even if file exists
 	#[arg(short, long)]
 	force: bool,
-
-	/// Keep downloaded XML file
-	#[arg(short, long)]
-	keep_xml: bool,
 
 	/// Verbose output
 	#[arg(short, long)]
@@ -52,28 +47,30 @@ struct WeaknessRelationship {
 	view_id: u32,
 }
 
-const CWE_XML_URL: &str = "https://cwe.mitre.org/data/xml/cwec_latest.xml.zip";
-const TEMP_ZIP_FILE: &str = "cwec_latest.xml.zip";
-const TEMP_XML_FILE: &str = "cwec_latest.xml";
-
 #[tokio::main]
 async fn main() -> Result<()> {
 	let args = Args::parse();
 
+	const CWE_XML_URL: &str = "https://cwe.mitre.org/data/xml/cwec_latest.xml.zip";
+
+	let mut cwe_temp_zip = NamedTempFile::new()?;
+	let mut cwe_temp_xml = NamedTempFile::new()?;
+
 	println!("RuskTeX Database Builder v0.1.0");
 
 	// Download the CWE XML file
-	if args.force || !Path::new(TEMP_XML_FILE).exists() {
-		print!("Downloading CWE XML file from MITRE…");
-		download_cwe_xml(&args).await?;
-		println!("✓");
+    if cwe_temp_zip.path().exists() {
+        print!("Downloading CWE XML file from MITRE…");
+        download_file(&CWE_XML_URL, &mut cwe_temp_zip, &args).await?;
+        println!("✓");
 
-		print!("Extracting XML file…");
-		extract_xml_from_zip(&args)?;
-		println!("✓");
-	} else {
-		println!("Using existing XML file: {}", TEMP_XML_FILE);
-	}
+        print!("Extracting XML file…");
+        extract_xml_from_zip(&cwe_temp_zip, &mut cwe_temp_xml, &args)?;
+        println!("✓");
+    } else {
+        eprintln!("Unable to create temporary file.");
+        std::process::exit(1);
+    }
 
 	// Create database
 	print!("Creating SQLite database:");
@@ -81,18 +78,9 @@ async fn main() -> Result<()> {
 	println!("SQLite database created ✓ ({})", args.output);
 
 	// Parse XML and populate database
-	print!("Parsing CWE XML and populating database…");
-	parse_and_populate_database(&conn, &args).await?;
-	println!("✓");
-
-	// Clean up temporary files
-	if !args.keep_xml {
-		print!("Cleaning temporary files…");
-		let _ = std::fs::remove_file(TEMP_ZIP_FILE);
-		let _ = std::fs::remove_file(TEMP_XML_FILE);
-		println!("✓");
-	}
-
+	println!("Parsing CWE XML and populating database:");
+	cwe_parse_and_populate_database(&mut cwe_temp_xml, &conn, &args).await?;
+	
 	// Display summary
 	display_database_summary(&conn)?;
 
@@ -100,63 +88,63 @@ async fn main() -> Result<()> {
 	Ok(())
 }
 
-async fn download_cwe_xml(args: &Args) -> Result<()> {
-	let client = Client::new();
+async fn download_file(url: &str, file: &mut NamedTempFile, args: &Args) -> Result<()> {
+    let client = Client::new();
 
-	if args.verbose {
-		println!("\nConnecting to: {}", CWE_XML_URL);
-	}
+    if args.verbose {
+        println!("\nConnecting to: {}", url);
+    }
 
-	let response = client
-		.get(CWE_XML_URL)
-		.send()
-		.await
-		.context("Failed to download CWE XML")?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .context("Failed to download CWE XML")?;
 
-	let total_size = response.content_length().unwrap_or(0);
-	if args.verbose && total_size > 0 {
-		println!("File size: {} bytes", total_size);
-	}
+    let total_size = response.content_length().unwrap_or(0);
+    if args.verbose && total_size > 0 {
+        println!("File size: {} bytes", total_size);
+    }
 
-	let mut file =
-		File::create(TEMP_ZIP_FILE).context("Failed to create temporary zip file")?;
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("Failed to read chunk")?;
+        file.as_file_mut().write_all(&chunk)
+            .context("Failed to write chunk to file")?;
+    }
+    
+    file.as_file_mut().sync_all().context("Failed to sync file to disk")?;
 
-	let mut stream = response.bytes_stream();
-	while let Some(chunk) = stream.next().await {
-		let chunk = chunk.context("Failed to read chunk")?;
-		file.write_all(&chunk)
-			.context("Failed to write chunk to file")?;
-	}
-
-	Ok(())
+    Ok(())
 }
 
-fn extract_xml_from_zip(args: &Args) -> Result<()> {
-	let file = File::open(TEMP_ZIP_FILE).context("Failed to open zip file")?;
-	let mut archive = ZipArchive::new(file).context("Failed to read zip archive")?;
+fn extract_xml_from_zip(zip_file: &NamedTempFile, xml_file: &mut NamedTempFile, args: &Args) -> Result<()> {
+    let file = std::fs::File::open(zip_file.path()).context("Failed to open zip file")?;
+    let mut archive = ZipArchive::new(file).context("Failed to read zip archive")?;
 
-	if args.verbose {
-		println!("\nExtracting: {}", TEMP_ZIP_FILE);
-	}
+    if args.verbose {
+        println!("\nExtracting zip file...");
+    }
 
-	for i in 0..archive.len() {
-		match archive.by_index(i) {
-			Ok(mut file) => {
-				if file.name().ends_with(".xml") {
-					let mut xml_file =
-						File::create(TEMP_XML_FILE).context("Failed to create XML file")?;
-					std::io::copy(&mut file, &mut xml_file).context("Failed to extract XML file")?;
-				}
-			}
-			Err(_) => {
-				return Err(anyhow::anyhow!(
-					"Could not extract file index {} in the downloaded zip file.", i.to_string()
-				));
-			}
-		}
-	}
+    for i in 0..archive.len() {
+        match archive.by_index(i) {
+            Ok(mut file) => {
+                if file.name().ends_with(".xml") {
+                    std::io::copy(&mut file, xml_file.as_file_mut())
+                        .context("Failed to extract XML file")?;
+                    break;
+                }
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Could not extract file index {} in the downloaded zip file: {}", 
+                    i, e
+                ));
+            }
+        }
+    }
 
-	Ok(())
+    Ok(())
 }
 
 fn create_database(db_path: &str) -> Result<Connection> {
@@ -202,8 +190,8 @@ fn create_database(db_path: &str) -> Result<Connection> {
 	Ok(conn)
 }
 
-async fn parse_and_populate_database(conn: &Connection, args: &Args) -> Result<()> {
-	let xml_content = fs::read_to_string(TEMP_XML_FILE)
+async fn cwe_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection, args: &Args) -> Result<()> {
+	let xml_content = fs::read_to_string(xml.path())
 		.await
 		.context("Failed to read XML file")?;
 
