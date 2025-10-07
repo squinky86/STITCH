@@ -64,11 +64,11 @@ async fn main() -> Result<()> {
 
 	// Download the CWE XML file
 	if args.force || !Path::new(TEMP_XML_FILE).exists() {
-		print!("Downloading CWE XML file from MITRE… ");
+		print!("Downloading CWE XML file from MITRE…");
 		download_cwe_xml(&args).await?;
 		println!("✓");
 
-		print!("Extracting XML file… ");
+		print!("Extracting XML file…");
 		extract_xml_from_zip(&args)?;
 		println!("✓");
 	} else {
@@ -76,27 +76,27 @@ async fn main() -> Result<()> {
 	}
 
 	// Create database
-	print!("Creating SQLite database… ");
+	print!("Creating SQLite database:");
 	let conn = create_database(&args.output)?;
-	println!("✓ {}", args.output);
+	println!("SQLite database created ✓ ({})", args.output);
 
 	// Parse XML and populate database
-	println!("Parsing CWE XML and populating database…");
+	print!("Parsing CWE XML and populating database…");
 	parse_and_populate_database(&conn, &args).await?;
-	println!("✓ Done");
+	println!("✓");
 
 	// Clean up temporary files
 	if !args.keep_xml {
+		print!("Cleaning temporary files…");
 		let _ = std::fs::remove_file(TEMP_ZIP_FILE);
 		let _ = std::fs::remove_file(TEMP_XML_FILE);
-		println!("✓ Temporary files cleaned up");
+		println!("✓");
 	}
 
 	// Display summary
 	display_database_summary(&conn)?;
 
-	println!("\nCWE database build completed successfully! 🎉");
-	println!("Database file: {}", args.output);
+	println!("\nCWE database build completed successfully: {}", args.output);
 	Ok(())
 }
 
@@ -214,7 +214,7 @@ async fn parse_and_populate_database(conn: &Connection, args: &Args) -> Result<(
 
 	loop {
 		match reader.read_event_into(&mut buf) {
-			Ok(Event::Start(ref e)) => {
+			Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e))=> {
 				current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
 
 				match current_element.as_str() {
@@ -348,7 +348,7 @@ fn insert_data_to_database(
 	relationships: &[WeaknessRelationship],
 ) -> Result<()> {
 	// Insert CWE entries
-	println!("Inserting {} CWE entries...", entries.len());
+	print!("\tInserting {} CWE entries…", entries.len());
 	let mut tx = conn.unchecked_transaction()?;
 	{
 		let mut stmt = tx.prepare_cached(
@@ -372,9 +372,10 @@ fn insert_data_to_database(
 		}
 	}
 	tx.commit()?;
+	println!("✓");
 
 	// Insert relationships
-	println!("Inserting {} relationships...", relationships.len());
+	print!("\tInserting {} relationships...", relationships.len());
 	tx = conn.unchecked_transaction()?;
 	{
 		let mut stmt = tx.prepare_cached(
@@ -388,6 +389,7 @@ fn insert_data_to_database(
 		}
 	}
 	tx.commit()?;
+	println!("✓");
 
 	Ok(())
 }

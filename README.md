@@ -1,46 +1,6 @@
-# CWE Database Builder
+# RuskTeX
 
-A Rust command-line tool that downloads the latest Common Weakness Enumeration (CWE) XML data from MITRE and builds a comprehensive SQLite database with weakness entries and their relationships.
-
-## Features
-
-- 🚀 **Automatic Download**: Downloads the latest CWE XML data from MITRE automatically
-- 🗄️ **SQLite Database**: Creates a well-structured SQLite database with proper indexing
-- 🔗 **Relationship Mapping**: Stores CWE relationships including nature and view context
-- 📊 **Comprehensive Schema**: Supports weaknesses, categories, views, and their relationships
-- ⚡ **Fast Processing**: Efficient XML parsing and database operations
-- 🛠️ **Command Line Interface**: Easy to use with various options
-
-## Database Schema
-
-The tool creates four main tables:
-
-### `cwe_entries` (Main CWE Weaknesses)
-- `id` - CWE identifier (e.g., "79", "89", "200")
-- `name` - Weakness name
-- `description` - Main description
-- `extended_description` - Additional details (optional)
-- `abstraction` - Abstraction level (Class, Base, Variant, etc.)
-- `structure` - Structure type
-- `status` - Status (Draft, Stable, etc.)
-
-### `cwe_relationships` (Mapping Table)
-- `source_id` - Source CWE ID
-- `target_id` - Target CWE ID
-- `nature` - Relationship nature (ChildOf, ParentOf, MemberOf, etc.)
-- `view_id` - View context (optional)
-
-### `cwe_categories`
-- `id` - Category identifier
-- `name` - Category name
-- `description` - Category description
-- `status` - Status
-
-### `cwe_views`
-- `id` - View identifier
-- `name` - View name
-- `description` - View description
-- `status` - Status
+A Rust command-line tool that maps CWEs, CVEs, ASD STIG Rules, and RMF Controls
 
 ## Installation
 
@@ -51,7 +11,7 @@ The tool creates four main tables:
 ### Build from source
 ```bash
 git clone <repository-url>
-cd cwe-database-builder
+cd RuskTeX
 cargo build --release
 ```
 
@@ -60,19 +20,19 @@ cargo build --release
 ### Basic usage
 ```bash
 # Build database with default settings
-./target/release/cwe_database_builder
+./target/release/RuskTeX
 
 # Specify output file
-./target/release/cwe_database_builder --output my_cwe.db
+./target/release/RuskTeX --output my_cwe.db
 
 # Verbose output
-./target/release/cwe_database_builder --verbose
+./target/release/RuskTeX --verbose
 
 # Force re-download even if XML exists
-./target/release/cwe_database_builder --force
+./target/release/RuskTeX --force
 
 # Keep XML files after processing
-./target/release/cwe_database_builder --keep-xml
+./target/release/RuskTeX --keep-xml
 ```
 
 ### Command-line options
@@ -89,45 +49,17 @@ Once the database is built, you can query it with any SQLite tool:
 ### Find all weaknesses related to SQL Injection
 ```sql
 SELECT e.id, e.name, e.description 
-FROM cwe_entries e
+FROM Weakness e
 WHERE e.name LIKE '%SQL%' OR e.description LIKE '%SQL injection%';
 ```
 
 ### Get all child weaknesses of a specific CWE
 ```sql
 SELECT target.id, target.name, r.nature
-FROM cwe_relationships r
-JOIN cwe_entries target ON r.target_id = target.id
+FROM Weakness r
+JOIN WeaknessRelationship target ON r.target_id = target.id
 WHERE r.source_id = '89' AND r.nature = 'ChildOf';
 ```
-
-### Find relationships by nature
-```sql
-SELECT source.name as source_name, 
-       target.name as target_name, 
-       r.nature, 
-       r.view_id
-FROM cwe_relationships r
-JOIN cwe_entries source ON r.source_id = source.id
-JOIN cwe_entries target ON r.target_id = target.id
-WHERE r.nature = 'ParentOf'
-ORDER BY source.name;
-```
-
-### Count relationships by type
-```sql
-SELECT nature, COUNT(*) as count 
-FROM cwe_relationships 
-GROUP BY nature 
-ORDER BY count DESC;
-```
-
-## Data Source
-
-This tool downloads data from:
-- **URL**: https://cwe.mitre.org/data/xml/cwec_latest.xml.zip
-- **Format**: MITRE CWE XML Schema
-- **Updates**: The tool always downloads the latest version
 
 ## Dependencies
 
@@ -138,13 +70,6 @@ This tool downloads data from:
 - `clap` - Command line parsing
 - `anyhow` - Error handling
 - `zip` - Archive extraction
-
-## Performance
-
-- **Download**: ~2-10MB compressed XML file
-- **Processing**: Typical processing time is under 30 seconds
-- **Database Size**: Final database is typically 15-25MB
-- **Memory Usage**: Low memory footprint with streaming XML parsing
 
 ## Error Handling
 
@@ -165,12 +90,6 @@ The tool includes comprehensive error handling for:
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- MITRE Corporation for maintaining the CWE database
-- The CWE Community for their ongoing contributions
-- Rust community for excellent libraries
 
 ---
 
