@@ -9,6 +9,7 @@ use std::io::Write;
 use tokio::fs;
 use zip::ZipArchive;
 use tempfile::NamedTempFile;
+use regex::Regex;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -76,6 +77,11 @@ async fn main() -> Result<()> {
 	const RMF_XML_URL: &str = "https://csrc.nist.gov/CSRC/media/Projects/risk-management/800-53%20Downloads/800-53r5/SP_800-53_v5_1_XML.xml";
 	let mut rmf_temp_xml = NamedTempFile::new()?;
 
+	//RMF CCI Data
+	const CCI_XML_URL: &str = "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/CCI+List.zip";
+	let mut cci_temp_zip = NamedTempFile::new()?;
+	let mut cci_temp_xml = NamedTempFile::new()?;
+
 	println!("RuskTeX Database Builder v0.1.0");
 
 	// Download the CWE XML file
@@ -84,7 +90,7 @@ async fn main() -> Result<()> {
         download_file(&CWE_XML_URL, &mut cwe_temp_zip, &args).await?;
         println!("✓");
 
-        print!("Extracting XML file…");
+        print!("Extracting CWE XML file…");
         extract_xml_from_zip(&cwe_temp_zip, &mut cwe_temp_xml, &args)?;
         println!("✓");
     } else {
@@ -102,6 +108,20 @@ async fn main() -> Result<()> {
 		std::process::exit(1);
 	}
 
+	// Download the CCI XML file
+	if cci_temp_zip.path().exists() {
+		print!("Downloading CCI XML file from DISA…");
+        download_file(&CCI_XML_URL, &mut cci_temp_zip, &args).await?;
+        println!("✓");
+
+        print!("Extracting CCI XML file…");
+        extract_xml_from_zip(&cci_temp_zip, &mut cci_temp_xml, &args)?;
+        println!("✓");
+    } else {
+        eprintln!("Unable to create temporary CCI file.");
+        std::process::exit(1);
+	}
+
 	// Create database
 	print!("Creating SQLite database:");
 	let conn = create_database(&args.output)?;
@@ -114,6 +134,10 @@ async fn main() -> Result<()> {
 	// Parse RMF XML and populate database
 	println!("Parsing NIST RMF XML and populating database:");
 	rmf_parse_and_populate_database(&mut rmf_temp_xml, &conn, &args).await?;
+
+	//Parse CCI XML and populate database
+	println!("Parsing DISA CCI XML and populating database:");
+	cci_parse_and_populate_database(&mut cci_temp_xml, &conn, &args).await?;
 
 	// Display summary
 	display_database_summary(&conn)?;
@@ -182,6 +206,10 @@ fn extract_xml_from_zip(zip_file: &NamedTempFile, xml_file: &mut NamedTempFile, 
 }
 
 fn create_database(db_path: &str) -> Result<Connection> {
+	// Delete the database file if it exists
+	if std::path::Path::new(db_path).exists() {
+		std::fs::remove_file(db_path).context("Failed to delete existing database file")?;
+	}
 	let conn = Connection::open(db_path).context("Failed to create database")?;
 
 	// Enable foreign key constraints
@@ -418,9 +446,6 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
     let mut families: Vec<RMFFamily> = Vec::new();
     let mut controls: Vec<RMFControl> = Vec::new();
     let mut buf = Vec::new();
-    
-    let mut current_family: Option<RMFFamily> = None;
-    let mut current_control: Option<RMFControl> = None;
 
 	let mut text_buffer = String::new();
 	let mut current_element = String::new();
@@ -430,6 +455,10 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 	let mut tmp_number: String = String::new();
 	let mut tmp_title: String = String::new();
 	let mut tmp_p: String = String::new();
+	let mut tmp_e_number: String = String::new();
+	let mut tmp_e_title: String = String::new();
+	let mut tmp_e_p: String = String::new();
+	let mut in_enhancements: bool = false;
     
 	loop {
 		match reader.read_event_into(&mut buf) {
@@ -437,9 +466,12 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 				current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
 
 				match current_element.as_str() {
-					"family" | "number" | "title" | "p" => {
+					"family" | "description" | "number" | "title" | "p" => {
 						capture_text = true;
 						text_buffer.clear();
+					}
+					"control-enhancements" => {
+						in_enhancements = true;
 					}
 					_ => {}
 				}
@@ -457,15 +489,84 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 						tmp_family = text_buffer.trim().to_string();
 					}
 					"number" => {
-						tmp_number = text_buffer.trim().to_string();
-						let family = RMFFamily {
-							id: 0,
-							abbr: tmp_number.chars().take(2).collect(),
-							name: tmp_family.clone()
-						};
-						if !families.iter().any(|f| f.abbr == family.abbr) {
-							families.push(family);
+						let tmp_num2 = text_buffer.trim().to_string();
+						// Regex that matches a NIST RMF control or enhancement (e.g., AC-03 or AC-03(1))
+    					// ^\s*[A-Z]{2}-\d{1,2}(?:\(\d{1,2}\))?\s*$
+						let re = Regex::new(r"^\s*[A-Z]{2}-\d{1,2}(?:\(\d{1,2}\))?\s*$").expect("Invalid Regex pattern");
+						if re.is_match(&tmp_num2) {
+							if in_enhancements {
+								tmp_e_number = tmp_num2.clone();
+							}
+							else {
+								tmp_number = tmp_num2.clone();
+							}
+							let family = RMFFamily {
+								id: 0,
+								abbr: tmp_num2.chars().take(2).collect(),
+								name: tmp_family.clone()
+							};
+							if !families.iter().any(|f| f.abbr == family.abbr) {
+								families.push(family);
+							}
 						}
+						else {
+							//we are in a line item within the description
+							if in_enhancements {
+								if tmp_e_p.len() > 0 {
+									tmp_e_p.push_str("\n");
+								}
+								tmp_e_p.push_str(&tmp_num2.trim());
+								tmp_e_p.push_str(" ");
+							}
+							else {
+								if tmp_p.len() > 0 {
+									tmp_p.push_str("\n");
+								}
+								tmp_p.push_str(&tmp_num2.trim());
+								tmp_p.push_str(" ");
+							}
+						}
+					}
+					"title" => {
+						if in_enhancements {
+							tmp_e_title = text_buffer.trim().to_string();
+						}
+						else {
+							tmp_title = text_buffer.trim().to_string();
+						}
+					}
+					"description" => {
+						if in_enhancements {
+							tmp_e_p.push_str(&text_buffer.trim().to_string().replace("<p>", "").replace("</p>", "\n").trim());
+						}
+						else {
+							tmp_p.push_str(&text_buffer.trim().to_string().replace("<p>", "").replace("</p>", "\n").trim());
+						}
+					}
+					"control-enhancements" => {
+						in_enhancements = false;
+					}
+					"controls:control" => {
+						let c: RMFControl = RMFControl {
+							id: 0,
+							RMFFamilyId: 0,
+							number: tmp_number.clone(),
+							name: tmp_title.clone(),
+							description: tmp_p.clone()
+						};
+						controls.push(c);
+						tmp_p = String::new();
+					}
+					"control-enhancement" => {
+						let c: RMFControl = RMFControl {
+							id: 0,
+							RMFFamilyId: 0,
+							number: tmp_e_number.clone(),
+							name: tmp_e_title.clone(),
+							description: tmp_e_p.clone()
+						};
+						controls.push(c);
+						tmp_e_p = String::new();
 					}
 					_ => {}
 				}
@@ -478,15 +579,169 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 		buf.clear();
 	}
 
-    // Insert families
+    // Insert RMF Families
     if args.verbose {
-        println!("Inserting {} RMF families...", families.len());
+        println!("Inserting {} RMF Families...", families.len());
     }
-    for family in families {
+    for family in &families {
         conn.execute(
             "INSERT OR REPLACE INTO RMFFamily (abbr, name) VALUES (?1, ?2)",
             params![family.abbr, family.name],
-        ).context("Failed to insert RMF family")?;
+        ).context("Failed to insert RMF Family")?;
+    }
+
+	// Insert RMF Controls
+    if args.verbose {
+        println!("Inserting {} RMF Controls...", families.len());
+    }
+    for control in &controls {
+		let mut tmp_sql : String = String::new();
+		tmp_sql.push_str("INSERT OR REPLACE INTO RMFControl (RMFFamilyId, number, name, description) VALUES ((SELECT id FROM RMFFamily WHERE abbr = $1), ?2, ?3, ?4)");
+		conn.execute(
+			&tmp_sql,
+            params![&control.number.chars().take(2).collect::<String>(), control.number, control.name, control.description],
+        ).context("Failed to insert RMF Control")?;
+    }
+
+    Ok(())
+}
+
+fn extract_control_identifier(input: &str) -> Option<String> {
+    // Regex to match the base control and optional single parenthetical enhancement
+    // NOTE: This captures (03) as (03). See further notes for (3)
+    let re = Regex::new(r"^([A-Z]{2,3}-\d{1,2}(?:\(\d{1,2}\))?)").unwrap();
+    
+    // Find the match
+    let captures = re.captures(input)?;
+    
+    // Extract the content of the first capturing group (index 1)
+    let control_part = captures.get(1)?.as_str().to_string();
+
+    // --- Optional: Post-Processing to remove leading zero if (0N) is present ---
+    if let Some(captures) = Regex::new(r"\(0(\d)\)$").unwrap().captures(&control_part) {
+        // If it matches (0N), replace the end of the string with (N)
+        let digit = captures.get(1).unwrap().as_str();
+        let stripped_control = control_part.strip_suffix(&captures.get(0).unwrap().as_str()).unwrap();
+        return Some(format!("{}({})", stripped_control, digit));
+    }
+    // --------------------------------------------------------------------------
+
+    Some(control_part)
+}
+
+async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection, args: &Args) -> Result<()> {
+    let xml_content = fs::read_to_string(xml.path())
+        .await
+        .context("Failed to read CCI XML file")?;
+
+    let mut reader = Reader::from_str(&xml_content);
+    reader.trim_text(true);
+
+    let mut buf = Vec::new();
+    let mut current_element = String::new();
+    let mut current_cci_id: u32 = 0;
+    let mut current_definition = String::new();
+    let mut current_references = Vec::new();
+    let mut capture_text = false;
+    let mut text_buffer = String::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+                current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
+
+                match current_element.as_str() {
+                    "cci_item" => {
+                        // Get the CCI ID from the id attribute
+                        for attr in e.attributes() {
+                            let attr = attr.context("Failed to parse CCI attribute")?;
+                            let key = String::from_utf8_lossy(attr.key.as_ref());
+                            let value = String::from_utf8_lossy(&attr.value);
+
+                            if key == "id" {
+								let tmp_cci = value.trim_start_matches(['C', 'I', '-']);
+                                current_cci_id = tmp_cci.parse::<u32>()
+                                    .context("Failed to parse CCI ID")?;
+                            }
+                        }
+                    }
+                    "definition" => {
+                        capture_text = true;
+                        text_buffer.clear();
+                    }
+                    "reference" => {
+                        let mut ref_title = String::new();
+                        let mut ref_index = String::new();
+                        
+                        // Get the reference title and index attributes
+                        for attr in e.attributes() {
+                            let attr = attr.context("Failed to parse reference attribute")?;
+                            let key = String::from_utf8_lossy(attr.key.as_ref());
+                            let value = String::from_utf8_lossy(&attr.value);
+
+                            match key.as_ref() {
+                                "title" => ref_title = value.to_string(),
+                                "index" => ref_index = value.to_string(),
+                                _ => {}
+                            }
+                        }
+                        
+                        // Only collect 800-53 Rev 5 references
+                        if ref_title == "NIST SP 800-53 Revision 5" {
+                            current_references.push(ref_index);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Text(e)) => {
+                if capture_text {
+                    text_buffer.push_str(&e.unescape().unwrap_or_default());
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                match tag_name.as_str() {
+                    "definition" => {
+                        current_definition = text_buffer.trim().to_string();
+                        capture_text = false;
+                    }
+                    "cci_item" => {
+                        // For each 800-53r5 reference, insert a CCI record
+                        for control_number in &current_references {
+							let tmp_control_number = extract_control_identifier(control_number);
+                            // Get the RMFControl ID for this control number
+                            let mut stmt = conn.prepare(
+                                "SELECT id FROM RMFControl WHERE number = ?"
+                            )?;
+                            
+                            if let Ok(control_id) = stmt.query_row([tmp_control_number], |row| row.get::<_, i64>(0)) {
+                                // Insert the CCI
+                                conn.execute(
+                                    "INSERT OR REPLACE INTO RMFCCI (id, RMFControlId, definition) VALUES (?1, ?2, ?3)",
+                                    params![current_cci_id, control_id, current_definition],
+                                ).context("Failed to insert CCI")?;
+
+                                if args.verbose {
+                                    println!("Inserted CCI {} for control {}", current_cci_id, control_number);
+                                }
+                            }
+                        }
+
+                        // Reset for next CCI
+                        current_cci_id = 0;
+                        current_definition.clear();
+                        current_references.clear();
+                    }
+                    _ => {}
+                }
+                current_element.clear();
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(anyhow::anyhow!("CCI XML parsing error: {}", e)),
+            _ => {}
+        }
+        buf.clear();
     }
 
     Ok(())
