@@ -885,7 +885,7 @@ fn display_database_summary(conn: &Connection) -> Result<()> {
 	// Count RMF CCIs
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFCCI")?;
 	let cci_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	println!("RMF Controls:   {}", cci_count);
+	println!("RMF CCIs:   {}", cci_count);
 
 	Ok(())
 }
