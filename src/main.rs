@@ -286,6 +286,53 @@ FOREIGN KEY (RMFControlId) REFERENCES RMFControl(id)
 	)
 	.context("Failed to create RMFCCI table")?;
 
+	conn.execute(
+		"CREATE TABLE IF NOT EXISTS STIG (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+classification TEXT,
+description TEXT,
+name TEXT,
+version TEXT
+);",
+		[],
+	)
+	.context("Failed to create STIG table")?;
+
+	conn.execute(
+		"CREATE TABLE IF NOT EXISTS STIGCheck (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+CheckContent TEXT,
+CheckSys TEXT,
+DISAId TEXT,
+Documentable INTEGER NOT NULL DEFAULT 0,
+FalseNegatives TEXT,
+FalsePositives TEXT,
+FixText TEXT,
+IAControls TEXT,
+Ident TEXT,
+MitigationControl TEXT,
+Mitigations TEXT,
+PotentialImpacts TEXT,
+Reference TEXT,
+Responsibility TEXT,
+STIGId INTEGER NOT NULL,
+Severity TEXT,
+SeverityOverrideGuidance TEXT,
+ThirdPartyTools TEXT,
+Title TEXT,
+VULNGroupId TEXT,
+VULNId TEXT,
+Version TEXT,
+VulnDiscussion TEXT,
+Weight NUMERIC NOT NULL DEFAULT 10.0,
+CWEId INTEGER,
+FOREIGN KEY(CWEId) REFERENCES Weakness(id),
+FOREIGN KEY(STIGId) REFERENCES STIG(id) ON DELETE CASCADE
+);",
+		[],
+	)
+	.context("Failed to create STIG table")?;
+
 	Ok(conn)
 }
 
@@ -580,20 +627,17 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 	}
 
     // Insert RMF Families
-    if args.verbose {
-        println!("Inserting {} RMF Families...", families.len());
-    }
+    print!("\tInserting {} RMF Families…", families.len());
     for family in &families {
         conn.execute(
             "INSERT OR REPLACE INTO RMFFamily (abbr, name) VALUES (?1, ?2)",
             params![family.abbr, family.name],
         ).context("Failed to insert RMF Family")?;
     }
+	println!("✓");
 
 	// Insert RMF Controls
-    if args.verbose {
-        println!("Inserting {} RMF Controls...", families.len());
-    }
+    print!("\tInserting {} RMF Controls", controls.len());
     for control in &controls {
 		let mut tmp_sql : String = String::new();
 		tmp_sql.push_str("INSERT OR REPLACE INTO RMFControl (RMFFamilyId, number, name, description) VALUES ((SELECT id FROM RMFFamily WHERE abbr = $1), ?2, ?3, ?4)");
@@ -602,6 +646,7 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
             params![&control.number.chars().take(2).collect::<String>(), control.number, control.name, control.description],
         ).context("Failed to insert RMF Control")?;
     }
+	println!("✓");
 
     Ok(())
 }
@@ -780,7 +825,7 @@ fn cwe_insert_data_to_database(
 	println!("✓");
 
 	// Insert relationships
-	print!("\tInserting {} relationships...", relationships.len());
+	print!("\tInserting {} relationships…", relationships.len());
 	tx = conn.unchecked_transaction()?;
 	{
 		let mut stmt = tx.prepare_cached(
@@ -826,6 +871,21 @@ fn display_database_summary(conn: &Connection) -> Result<()> {
 			println!("  - {}: {}", nature, count);
 		}
 	}
+
+	// Count RMF Families
+	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFFamily")?;
+	let fam_count: i64 = stmt.query_row([], |row| row.get(0))?;
+	println!("RMF Families:   {}", fam_count);
+
+	// Count RMF Controls
+	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFControl")?;
+	let control_count: i64 = stmt.query_row([], |row| row.get(0))?;
+	println!("RMF Controls:   {}", control_count);
+
+	// Count RMF CCIs
+	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFCCI")?;
+	let cci_count: i64 = stmt.query_row([], |row| row.get(0))?;
+	println!("RMF Controls:   {}", cci_count);
 
 	Ok(())
 }
