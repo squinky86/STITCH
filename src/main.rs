@@ -47,14 +47,34 @@ struct WeaknessRelationship {
 	view_id: u32,
 }
 
+#[derive(Debug, Clone, Default)]
+struct RMFFamily {
+	id: u32,
+	abbr: String,
+	name: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RMFControl {
+	id: u32,
+	RMFFamilyId: u32,
+	number: String,
+	name: String,
+	description: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
 	let args = Args::parse();
 
+	//CWE Data
 	const CWE_XML_URL: &str = "https://cwe.mitre.org/data/xml/cwec_latest.xml.zip";
-
 	let mut cwe_temp_zip = NamedTempFile::new()?;
 	let mut cwe_temp_xml = NamedTempFile::new()?;
+
+	//RMF Control Data
+	const RMF_XML_URL: &str = "https://csrc.nist.gov/CSRC/media/Projects/risk-management/800-53%20Downloads/800-53r5/SP_800-53_v5_1_XML.xml";
+	let mut rmf_temp_xml = NamedTempFile::new()?;
 
 	println!("RuskTeX Database Builder v0.1.0");
 
@@ -68,19 +88,33 @@ async fn main() -> Result<()> {
         extract_xml_from_zip(&cwe_temp_zip, &mut cwe_temp_xml, &args)?;
         println!("✓");
     } else {
-        eprintln!("Unable to create temporary file.");
+        eprintln!("Unable to create temporary CWE file.");
         std::process::exit(1);
     }
+
+	// Download the RMF XML file
+	if rmf_temp_xml.path().exists() {
+		print!("Downloading NIST RMF XML file from NIST…");
+		download_file(&RMF_XML_URL, &mut rmf_temp_xml, &args).await?;
+		println!("✓");
+	} else {
+		eprintln!("Unable to create temporary RMF file.");
+		std::process::exit(1);
+	}
 
 	// Create database
 	print!("Creating SQLite database:");
 	let conn = create_database(&args.output)?;
 	println!("SQLite database created ✓ ({})", args.output);
 
-	// Parse XML and populate database
+	// Parse CWE XML and populate database
 	println!("Parsing CWE XML and populating database:");
 	cwe_parse_and_populate_database(&mut cwe_temp_xml, &conn, &args).await?;
-	
+
+	// Parse RMF XML and populate database
+	println!("Parsing NIST RMF XML and populating database:");
+	rmf_parse_and_populate_database(&mut rmf_temp_xml, &conn, &args).await?;
+
 	// Display summary
 	display_database_summary(&conn)?;
 
@@ -156,36 +190,73 @@ fn create_database(db_path: &str) -> Result<Connection> {
 	// Create CWE Weakness table
 	conn.execute(
 		"CREATE TABLE IF NOT EXISTS Weakness (
-            id INTEGER NOT NULL UNIQUE PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
-            extended_description TEXT NOT NULL DEFAULT '',
-            category BOOLEAN NOT NULL DEFAULT 0 CHECK(category IN (0, 1)),
-            view BOOLEAN NOT NULL DEFAULT 0 CHECK(view IN (0, 1)),
-            confidentiality BOOLEAN NOT NULL DEFAULT 0 CHECK(confidentiality IN (0, 1)),
-            integrity BOOLEAN NOT NULL DEFAULT 0 CHECK(integrity IN (0, 1)),
-            availability BOOLEAN NOT NULL DEFAULT 0 CHECK(availability IN (0, 1))
-        );",
+id INTEGER NOT NULL UNIQUE PRIMARY KEY,
+name TEXT NOT NULL,
+description TEXT NOT NULL DEFAULT '',
+extended_description TEXT NOT NULL DEFAULT '',
+category BOOLEAN NOT NULL DEFAULT 0 CHECK(category IN (0, 1)),
+view BOOLEAN NOT NULL DEFAULT 0 CHECK(view IN (0, 1)),
+confidentiality BOOLEAN NOT NULL DEFAULT 0 CHECK(confidentiality IN (0, 1)),
+integrity BOOLEAN NOT NULL DEFAULT 0 CHECK(integrity IN (0, 1)),
+availability BOOLEAN NOT NULL DEFAULT 0 CHECK(availability IN (0, 1))
+);",
 		[],
 	)
 	.context("Failed to create Weakness table")?;
 
-	// Create relationships table
+	// Create CWE relationships table
 	conn.execute(
 		"CREATE TABLE IF NOT EXISTS WeaknessRelationship (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_id INTEGER NOT NULL,
-            target_id INTEGER NOT NULL,
-            nature TEXT NOT NULL,
-            view_id INTEGER NOT NULL,
-            UNIQUE(source_id, target_id, nature, view_id),
-            FOREIGN KEY (source_id) REFERENCES Weakness(id),
-            FOREIGN KEY (target_id) REFERENCES Weakness(id),
-            FOREIGN KEY (view_id) REFERENCES Weakness(id)
-        );",
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+source_id INTEGER NOT NULL,
+target_id INTEGER NOT NULL,
+nature TEXT NOT NULL,
+view_id INTEGER NOT NULL,
+UNIQUE(source_id, target_id, nature, view_id),
+FOREIGN KEY (source_id) REFERENCES Weakness(id),
+FOREIGN KEY (target_id) REFERENCES Weakness(id),
+FOREIGN KEY (view_id) REFERENCES Weakness(id)
+);",
 		[],
 	)
 	.context("Failed to create WeaknessRelationship table")?;
+
+	// Create RMF Family table
+	conn.execute(
+		"CREATE TABLE IF NOT EXISTS RMFFamily (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+abbr TEXT NOT NULL UNIQUE,
+name TEXT NOT NULL
+);",
+		[],
+	)
+	.context("Failed to create RMFFamily table")?;
+
+	// Create RMF Control table
+	conn.execute(
+		"CREATE TABLE IF NOT EXISTS RMFControl (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+RMFFamilyId INTEGER NOT NULL,
+number TEXT NOT NULL,
+name TEXT NOT NULL,
+description TEXT NOT NULL,
+FOREIGN KEY (RMFFamilyId) REFERENCES RMFFamily(id)
+);",
+		[],
+	)
+	.context("Failed to create RMFControl table")?;
+
+	// Create RMF CCI table
+	conn.execute(
+		"CREATE TABLE IF NOT EXISTS RMFCCI (
+id INTEGER PRIMARY KEY UNIQUE,
+RMFControlId INTEGER NOT NULL,
+definition TEXT NOT NULL,
+FOREIGN KEY (RMFControlId) REFERENCES RMFControl(id)
+);",
+		[],
+	)
+	.context("Failed to create RMFCCI table")?;
 
 	Ok(conn)
 }
@@ -332,12 +403,96 @@ async fn cwe_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 		buf.clear();
 	}
 
-	insert_data_to_database(conn, &cwe_entries, &relationships)?;
+	cwe_insert_data_to_database(conn, &cwe_entries, &relationships)?;
 
 	Ok(())
 }
 
-fn insert_data_to_database(
+async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection, args: &Args) -> Result<()> {
+    let xml_content = fs::read_to_string(xml.path())
+        .await
+        .context("Failed to read RMF XML file")?;
+    let mut reader = Reader::from_str(&xml_content);
+    reader.trim_text(true);
+
+    let mut families: Vec<RMFFamily> = Vec::new();
+    let mut controls: Vec<RMFControl> = Vec::new();
+    let mut buf = Vec::new();
+    
+    let mut current_family: Option<RMFFamily> = None;
+    let mut current_control: Option<RMFControl> = None;
+
+	let mut text_buffer = String::new();
+	let mut current_element = String::new();
+	let mut capture_text = false;
+
+	let mut tmp_family: String = String::new();
+	let mut tmp_number: String = String::new();
+	let mut tmp_title: String = String::new();
+	let mut tmp_p: String = String::new();
+    
+	loop {
+		match reader.read_event_into(&mut buf) {
+			Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e))=> {
+				current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
+
+				match current_element.as_str() {
+					"family" | "number" | "title" | "p" => {
+						capture_text = true;
+						text_buffer.clear();
+					}
+					_ => {}
+				}
+			}
+			Ok(Event::Text(e)) => {
+				if capture_text {
+					text_buffer.push_str(&e.unescape().unwrap_or_default());
+				}
+			}
+			Ok(Event::End(ref e)) => {
+				let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+				match tag_name.as_str() {
+					"family" =>
+					{
+						tmp_family = text_buffer.trim().to_string();
+					}
+					"number" => {
+						tmp_number = text_buffer.trim().to_string();
+						let family = RMFFamily {
+							id: 0,
+							abbr: tmp_number.chars().take(2).collect(),
+							name: tmp_family.clone()
+						};
+						if !families.iter().any(|f| f.abbr == family.abbr) {
+							families.push(family);
+						}
+					}
+					_ => {}
+				}
+				current_element.clear();
+			}
+			Ok(Event::Eof) => break,
+			Err(e) => return Err(anyhow::anyhow!("RMF XML parsing error: {}", e)),
+			_ => {}
+		}
+		buf.clear();
+	}
+
+    // Insert families
+    if args.verbose {
+        println!("Inserting {} RMF families...", families.len());
+    }
+    for family in families {
+        conn.execute(
+            "INSERT OR REPLACE INTO RMFFamily (abbr, name) VALUES (?1, ?2)",
+            params![family.abbr, family.name],
+        ).context("Failed to insert RMF family")?;
+    }
+
+    Ok(())
+}
+
+fn cwe_insert_data_to_database(
 	conn: &Connection,
 	entries: &[Weakness],
 	relationships: &[WeaknessRelationship],
