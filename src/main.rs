@@ -64,6 +64,44 @@ struct RMFControl {
 	description: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct STIG {
+    id: u32,
+    classification: String,
+    description: String,
+    name: String, 
+    version: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct STIGCheck {
+    id: u32,
+    check_content: String,
+    check_system: String,
+    disa_id: String,
+    documentable: bool,
+    false_negatives: String,
+    false_positives: String,
+    fix_text: String,
+    ia_controls: String,
+    ident: String,
+    mitigation_control: String,
+    mitigations: String,
+    potential_impacts: String,
+    reference: String,
+    responsibility: String,
+    stig_id: u32,
+    severity: String,
+    severity_override_guidance: String,
+    third_party_tools: String,
+    title: String,
+    vuln_group_id: String,
+    vuln_id: String,
+    version: String,
+    vuln_discussion: String,
+    weight: f64,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
 	let args = Args::parse();
@@ -81,6 +119,11 @@ async fn main() -> Result<()> {
 	const CCI_XML_URL: &str = "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/CCI+List.zip";
 	let mut cci_temp_zip = NamedTempFile::new()?;
 	let mut cci_temp_xml = NamedTempFile::new()?;
+
+	//STIG Data
+	const STIG_XML_URL: &str = "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_ASD_V6R3_STIG.zip";
+	let mut stig_temp_zip = NamedTempFile::new()?;
+	let mut stig_temp_xml = NamedTempFile::new()?;
 
 	println!("RuskTeX Database Builder v0.1.0");
 
@@ -122,6 +165,20 @@ async fn main() -> Result<()> {
         std::process::exit(1);
 	}
 
+	// Download the STIG XML file
+	if stig_temp_zip.path().exists() {
+		print!("Downloading STIG XML file from DISA…");
+        download_file(&STIG_XML_URL, &mut stig_temp_zip, &args).await?;
+        println!("✓");
+
+        print!("Extracting STIG XML file…");
+        extract_xml_from_zip(&stig_temp_zip, &mut stig_temp_xml, &args)?;
+        println!("✓");
+    } else {
+        eprintln!("Unable to create temporary STIG file.");
+        std::process::exit(1);
+	}
+
 	// Create database
 	print!("Creating SQLite database:");
 	let conn = create_database(&args.output)?;
@@ -138,6 +195,10 @@ async fn main() -> Result<()> {
 	//Parse CCI XML and populate database
 	println!("Parsing DISA CCI XML and populating database:");
 	cci_parse_and_populate_database(&mut cci_temp_xml, &conn, &args).await?;
+
+	// Parse STIG XML and populate database
+	println!("Parsing DISA STIG XML and populating database:");
+	stig_parse_and_populate_database(&mut stig_temp_xml, &conn, &args).await?;
 
 	// Display summary
 	display_database_summary(&conn)?;
@@ -328,6 +389,18 @@ Weight NUMERIC NOT NULL DEFAULT 10.0,
 CWEId INTEGER,
 FOREIGN KEY(CWEId) REFERENCES Weakness(id),
 FOREIGN KEY(STIGId) REFERENCES STIG(id) ON DELETE CASCADE
+);",
+		[],
+	)
+	.context("Failed to create STIG table")?;
+
+	conn.execute(
+		"CREATE TABLE IF NOT EXISTS MapSTIGCheckCCI (
+STIGCheckID INTEGER,
+CCIId INTEGER,
+PRIMARY KEY(STIGCheckId,CCIId),
+FOREIGN KEY(CCIId) REFERENCES RMFCCI(id),
+FOREIGN KEY(STIGCheckID) REFERENCES STIGCheck(id)
 );",
 		[],
 	)
@@ -792,6 +865,283 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
     Ok(())
 }
 
+async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection, args: &Args) -> Result<()> {
+    let xml_content = fs::read_to_string(xml.path())
+        .await
+        .context("Failed to read STIG XML file")?;
+
+    let mut reader = Reader::from_str(&xml_content);
+    reader.trim_text(true);
+
+    let mut buf = Vec::new();
+    let mut text_buffer = String::new();
+    let mut current_element = String::new();
+    let mut capture_text = false;
+
+	let mut in_rule = false;
+
+	let mut tcheck_content = String::new();
+    let mut tcheck_system = String::new();
+    let mut tdisa_id  = String::new();
+    let mut tdocumentable = false;
+    let mut tfalse_negatives  = String::new();
+    let mut tfalse_positives  = String::new();
+    let mut tfix_text  = String::new();
+    let mut tia_controls  = String::new();
+    let mut tident  = String::new();
+    let mut tmitigation_control  = String::new();
+    let mut tmitigations  = String::new();
+    let mut tpotential_impacts  = String::new();
+    let mut treference  = String::new();
+    let mut tresponsibility  = String::new();
+    let mut tstig_id: u32 = 0;
+    let mut tseverity  = String::new();
+    let mut tseverity_override_guidance  = String::new();
+    let mut tthird_party_tools  = String::new();
+    let mut ttitle  = String::new();
+    let mut tvuln_group_id  = String::new();
+    let mut tvuln_id  = String::new();
+    let mut tversion  = String::new();
+    let mut tvuln_discussion  = String::new();
+    let mut tweight: f64 = 10.0;
+	let mut tccis: Vec<u32> = Vec::new();
+
+    // Insert STIG record first to get its ID
+    let stig_id = conn.execute(
+        "INSERT INTO STIG (classification, description, name, version) VALUES (?1, ?2, ?3, ?4)",
+        params![
+            "UNCLASSIFIED", // Default classification
+            "Application Security and Development STIG",
+            "ASD STIG",
+            "V6R3"
+        ],
+    )?;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) => {
+                current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                match current_element.as_str() {
+                    "Group" => {
+                        for attr in e.attributes() {
+                            let attr = attr.context("Failed to parse CCI attribute")?;
+                            let key = String::from_utf8_lossy(attr.key.as_ref());
+                            let value = String::from_utf8_lossy(&attr.value);
+
+                            if key == "id" {
+								tvuln_id = value.to_string();
+                            }
+                        }
+                    }
+					"ident" => {
+						for attr in e.attributes() {
+                            let attr = attr.context("Failed to parse ident attribute")?;
+                            let key = String::from_utf8_lossy(attr.key.as_ref());
+                            let value = String::from_utf8_lossy(&attr.value);
+
+                            if key == "system" {
+								if value == "http://cyber.mil/cci" {
+									capture_text = true;
+									text_buffer.clear();
+								}
+                            }
+                        }
+					}
+					"Rule" => {
+						in_rule = true;
+						for attr in e.attributes() {
+                            let attr = attr.context("Failed to parse ident attribute")?;
+                            let key = String::from_utf8_lossy(attr.key.as_ref());
+                            let value = String::from_utf8_lossy(&attr.value);
+
+							match key.as_ref() {
+								"id" => {
+									tdisa_id = value.to_string();
+								}
+								"weight" => {
+									tweight = value.parse::<f64>().unwrap_or(10.0);
+								}
+								"severity" => {
+									tseverity = value.to_string();
+								}
+								_ => {}
+							}
+                        }
+					}
+					"title" | "description" | "fixtext" | "check-content" => {
+						capture_text = true;
+						text_buffer.clear();
+					}
+                    _ => {
+                    }
+                }
+            }
+			/*Ok(Event::Empty(ref e)) => {
+                current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                match current_element.as_str() {
+					"fix" => {
+						if in_rule {
+							for attr in e.attributes() {
+								let attr = attr.context("Failed to parse CCI attribute")?;
+								let key = String::from_utf8_lossy(attr.key.as_ref());
+								let value = String::from_utf8_lossy(&attr.value);
+
+								if key == "id" {
+									tfix
+								}
+							}
+						}
+					}
+				}
+			}*/
+            Ok(Event::Text(e)) => {
+                if capture_text {
+                    text_buffer.push_str(&e.unescape().unwrap_or_default());
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                match tag_name.as_str() {
+                    "title" => {
+						if in_rule {
+							ttitle = text_buffer.trim().to_string();
+						}
+						else {
+							tvuln_group_id = text_buffer.trim().to_string();
+						}
+					}
+					"ident" => {
+						if in_rule {
+							let tcci_str = text_buffer.trim().to_string();
+							if tcci_str.len() > 0 {
+								tccis.push(tcci_str.parse::<u32>().unwrap_or(0));
+							}
+						}
+					}
+					"description" => {
+						if in_rule {
+							// Create a new Reader for the embedded XML content
+							let tBuf = text_buffer.replace("&gt;", ">").replace("&lt;", "<");
+							let mut desc_reader = Reader::from_str(&tBuf);
+							desc_reader.trim_text(true);
+							
+							let mut desc_buf = Vec::new();
+							let mut desc_text = String::new();
+							let mut desc_element = String::new();
+							let mut desc_capture = false;
+					
+							loop {
+								match desc_reader.read_event_into(&mut desc_buf) {
+									Ok(Event::Start(ref e)) => {
+										desc_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
+										desc_capture = true;
+										desc_text.clear();
+									}
+									Ok(Event::Text(e)) => {
+										if desc_capture {
+											desc_text.push_str(&e.unescape().unwrap_or_default());
+										}
+									}
+									Ok(Event::End(ref e)) => {
+										let end_tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+										match end_tag.as_str() {
+											"VulnDiscussion" => tvuln_discussion = desc_text.trim().to_string(),
+											"FalseNegatives" => tfalse_negatives = desc_text.trim().to_string(),
+											"FalsePositives" => tfalse_positives = desc_text.trim().to_string(),
+											"Documentable" => tdocumentable = desc_text.trim().eq_ignore_ascii_case("true"),
+											"Mitigations" => tmitigations = desc_text.trim().to_string(),
+											"PotentialImpacts" => tpotential_impacts = desc_text.trim().to_string(),
+											"ThirdPartyTools" => tthird_party_tools = desc_text.trim().to_string(),
+											"MitigationControl" => tmitigation_control = desc_text.trim().to_string(),
+											"Severity" => tseverity = desc_text.trim().to_string(),
+											"SeverityOverrideGuidance" => tseverity_override_guidance = desc_text.trim().to_string(),
+											"CheckContent" => tcheck_content = desc_text.trim().to_string(),
+											"CheckSystem" => tcheck_system = desc_text.trim().to_string(),
+											"IAControls" => tia_controls = desc_text.trim().to_string(),
+											"Responsibility" => tresponsibility = desc_text.trim().to_string(),
+											"References" => treference = desc_text.trim().to_string(),
+											_ => {}
+										}
+										desc_capture = false;
+									}
+									Ok(Event::Eof) => break,
+									Err(e) => {
+										eprintln!("Error parsing description XML: {}", e);
+										break;
+									}
+									_ => {}
+								}
+								desc_buf.clear();
+							}
+						}
+					}
+					"Rule" => {
+                        in_rule = false;
+                        // Insert the check into database
+                        conn.execute(
+                            "INSERT INTO STIGCheck (
+                                CheckContent, CheckSys, DISAId, Documentable, 
+                                FalseNegatives, FalsePositives, FixText, IAControls,
+                                Ident, MitigationControl, Mitigations, PotentialImpacts,
+                                Reference, Responsibility, STIGId, Severity,
+                                SeverityOverrideGuidance, ThirdPartyTools, Title,
+                                VULNGroupId, VULNId, Version, VulnDiscussion, Weight
+                            ) VALUES (
+                                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                                ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
+                            )",
+                            params![
+                                tcheck_content,
+                                tcheck_system,
+                                tdisa_id,
+                                tdocumentable,
+                                tfalse_negatives,
+                                tfalse_positives,
+                                tfix_text,
+                                tia_controls,
+                                tident,
+                                tmitigation_control,
+                                tmitigations,
+                                tpotential_impacts,
+                                treference,
+                                tresponsibility,
+                                1,
+                                tseverity,
+                                tseverity_override_guidance,
+                                tthird_party_tools,
+                                ttitle,
+                                tvuln_group_id,
+                                tvuln_id,
+                                tversion,
+                                tvuln_discussion,
+                                tweight
+                            ],
+                        )?;
+                    }
+					"fixtext" => {
+						if in_rule {
+							tfix_text = text_buffer.trim().to_string();
+						}
+					}
+					"check-content" => {
+						if in_rule {
+							tcheck_content = text_buffer.trim().to_string();
+						}
+					}
+                    _ => {}
+                }
+                capture_text = false;
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(anyhow::anyhow!("STIG XML parsing error: {}", e)),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(())
+}
+
 fn cwe_insert_data_to_database(
 	conn: &Connection,
 	entries: &[Weakness],
@@ -886,6 +1236,16 @@ fn display_database_summary(conn: &Connection) -> Result<()> {
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFCCI")?;
 	let cci_count: i64 = stmt.query_row([], |row| row.get(0))?;
 	println!("RMF CCIs:   {}", cci_count);
+
+	// Count STIGs
+	let mut stmt = conn.prepare("SELECT COUNT(*) FROM STIG")?;
+	let stig_count: i64 = stmt.query_row([], |row| row.get(0))?;
+	println!("STIGs: {}", stig_count);
+
+	// Count STIG Checks
+	let mut stmt = conn.prepare("SELECT COUNT(*) FROM STIGCheck")?;
+	let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
+	println!("STIG Checks: {}", check_count);
 
 	Ok(())
 }
