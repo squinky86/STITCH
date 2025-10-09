@@ -58,7 +58,7 @@ struct RMFFamily {
 #[derive(Debug, Clone, Default)]
 struct RMFControl {
 	id: u32,
-	RMFFamilyId: u32,
+	rmf_family_id: u32,
 	number: String,
 	name: String,
 	description: String,
@@ -190,15 +190,15 @@ async fn main() -> Result<()> {
 
 	// Parse RMF XML and populate database
 	println!("Parsing NIST RMF XML and populating database:");
-	rmf_parse_and_populate_database(&mut rmf_temp_xml, &conn, &args).await?;
+	rmf_parse_and_populate_database(&mut rmf_temp_xml, &conn).await?;
 
 	//Parse CCI XML and populate database
 	println!("Parsing DISA CCI XML and populating database:");
-	cci_parse_and_populate_database(&mut cci_temp_xml, &conn, &args).await?;
+	cci_parse_and_populate_database(&mut cci_temp_xml, &conn).await?;
 
 	// Parse STIG XML and populate database
 	println!("Parsing DISA STIG XML and populating database:");
-	stig_parse_and_populate_database(&mut stig_temp_xml, &conn, &args).await?;
+	stig_parse_and_populate_database(&mut stig_temp_xml, &conn).await?;
 
 	// Display summary
 	display_database_summary(&conn)?;
@@ -556,7 +556,7 @@ async fn cwe_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 	Ok(())
 }
 
-async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection, args: &Args) -> Result<()> {
+async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection) -> Result<()> {
     let xml_content = fs::read_to_string(xml.path())
         .await
         .context("Failed to read RMF XML file")?;
@@ -669,7 +669,7 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 					"controls:control" => {
 						let c: RMFControl = RMFControl {
 							id: 0,
-							RMFFamilyId: 0,
+							rmf_family_id: 0,
 							number: tmp_number.clone(),
 							name: tmp_title.clone(),
 							description: tmp_p.clone()
@@ -680,7 +680,7 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 					"control-enhancement" => {
 						let c: RMFControl = RMFControl {
 							id: 0,
-							RMFFamilyId: 0,
+							rmf_family_id: 0,
 							number: tmp_e_number.clone(),
 							name: tmp_e_title.clone(),
 							description: tmp_e_p.clone()
@@ -747,7 +747,7 @@ fn extract_control_identifier(input: &str) -> Option<String> {
     Some(control_part)
 }
 
-async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection, args: &Args) -> Result<()> {
+async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection) -> Result<()> {
     let xml_content = fs::read_to_string(xml.path())
         .await
         .context("Failed to read CCI XML file")?;
@@ -839,10 +839,6 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
                                     "INSERT OR REPLACE INTO RMFCCI (id, RMFControlId, definition) VALUES (?1, ?2, ?3)",
                                     params![current_cci_id, control_id, current_definition],
                                 ).context("Failed to insert CCI")?;
-
-                                if args.verbose {
-                                    println!("Inserted CCI {} for control {}", current_cci_id, control_number);
-                                }
                             }
                         }
 
@@ -865,7 +861,7 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
     Ok(())
 }
 
-async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection, args: &Args) -> Result<()> {
+async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection) -> Result<()> {
     let xml_content = fs::read_to_string(xml.path())
         .await
         .context("Failed to read STIG XML file")?;
