@@ -5,7 +5,7 @@ A Rust command-line tool that maps CWEs, CVEs, ASD STIG Rules, and RMF Controls
 ## Installation
 
 ### Prerequisites
-- Rust (1.70+)
+- Rust (1.85+)
 - Internet connection (for downloading CWE data)
 
 ### Build from source

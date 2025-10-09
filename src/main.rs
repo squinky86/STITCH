@@ -1376,7 +1376,7 @@ fn display_database_summary(conn: &Connection) -> Result<()> {
 	// Count entries
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM Weakness")?;
 	let entry_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	println!("CWE Entries:   {}", entry_count);
+	println!("CWE Entries: {}", entry_count);
 
 	// Count relationships
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM WeaknessRelationship")?;
@@ -1384,7 +1384,7 @@ fn display_database_summary(conn: &Connection) -> Result<()> {
 	println!("Relationships: {}", rel_count);
 
 	if rel_count > 0 {
-		println!("\nRelationship Types:");
+		println!("Relationship Types:");
 		let mut stmt = conn.prepare(
 			"SELECT nature, COUNT(*) as count FROM WeaknessRelationship 
              GROUP BY nature ORDER BY count DESC",
@@ -1394,24 +1394,24 @@ fn display_database_summary(conn: &Connection) -> Result<()> {
 		})?;
 
 		while let Some(Ok((nature, count))) = rows.next() {
-			println!("  - {}: {}", nature, count);
+			println!("\t{}: {}", nature, count);
 		}
 	}
 
 	// Count RMF Families
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFFamily")?;
 	let fam_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	println!("RMF Families:   {}", fam_count);
+	println!("RMF Families: {}", fam_count);
 
 	// Count RMF Controls
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFControl")?;
 	let control_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	println!("RMF Controls:   {}", control_count);
+	println!("RMF Controls: {}", control_count);
 
 	// Count RMF CCIs
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFCCI")?;
 	let cci_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	println!("RMF CCIs:   {}", cci_count);
+	println!("RMF CCIs: {}", cci_count);
 
 	// Count STIGs
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM STIG")?;
