@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use futures_util::StreamExt;
+use futures_util::{FutureExt, StreamExt};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use reqwest::Client;
@@ -84,7 +84,6 @@ struct STIGCheck {
     false_positives: String,
     fix_text: String,
     ia_controls: String,
-    ident: String,
     mitigation_control: String,
     mitigations: String,
     potential_impacts: String,
@@ -370,7 +369,6 @@ FalseNegatives TEXT,
 FalsePositives TEXT,
 FixText TEXT,
 IAControls TEXT,
-Ident TEXT,
 MitigationControl TEXT,
 Mitigations TEXT,
 PotentialImpacts TEXT,
@@ -399,8 +397,8 @@ FOREIGN KEY(STIGId) REFERENCES STIG(id) ON DELETE CASCADE
 STIGCheckID INTEGER,
 CCIId INTEGER,
 PRIMARY KEY(STIGCheckId,CCIId),
-FOREIGN KEY(CCIId) REFERENCES RMFCCI(id),
-FOREIGN KEY(STIGCheckID) REFERENCES STIGCheck(id)
+FOREIGN KEY(CCIId) REFERENCES RMFCCI(id) ON DELETE CASCADE,
+FOREIGN KEY(STIGCheckID) REFERENCES STIGCheck(id) ON DELETE CASCADE
 );",
 		[],
 	)
@@ -760,6 +758,7 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
     let mut current_cci_id: u32 = 0;
     let mut current_definition = String::new();
     let mut current_references = Vec::new();
+	let mut current_v4_references = Vec::new();
     let mut capture_text = false;
     let mut text_buffer = String::new();
 
@@ -806,7 +805,12 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
                         
                         // Only collect 800-53 Rev 5 references
                         if ref_title == "NIST SP 800-53 Revision 5" {
-                            current_references.push(ref_index);
+                            current_references.push(ref_index.clone());
+                        }
+
+						// Only collect Rev 4 references when Rev 5 mappings don't exist
+                        if ref_title == "NIST SP 800-53 Revision 4" {
+                            current_v4_references.push(ref_index.clone());
                         }
                     }
                     _ => {}
@@ -826,6 +830,9 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
                     }
                     "cci_item" => {
                         // For each 800-53r5 reference, insert a CCI record
+						if current_references.len() == 0 && current_v4_references.len() > 0 {
+							current_references.append(&mut current_v4_references);
+						}
                         for control_number in &current_references {
 							let tmp_control_number = extract_control_identifier(control_number);
                             // Get the RMFControl ID for this control number
@@ -846,6 +853,7 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
                         current_cci_id = 0;
                         current_definition.clear();
                         current_references.clear();
+						current_v4_references.clear();
                     }
                     _ => {}
                 }
@@ -875,6 +883,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
     let mut capture_text = false;
 
 	let mut in_rule = false;
+	let mut in_ident_cci = false;
 
 	let mut tcheck_content = String::new();
     let mut tcheck_system = String::new();
@@ -884,7 +893,6 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
     let mut tfalse_positives  = String::new();
     let mut tfix_text  = String::new();
     let mut tia_controls  = String::new();
-    let mut tident  = String::new();
     let mut tmitigation_control  = String::new();
     let mut tmitigations  = String::new();
     let mut tpotential_impacts  = String::new();
@@ -918,9 +926,20 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
             Ok(Event::Start(ref e)) => {
                 current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match current_element.as_str() {
-                    "Group" => {
+                    "check" => {
+						for attr in e.attributes() {
+                            let attr = attr.context("Failed to parse STIG check attribute")?;
+                            let key = String::from_utf8_lossy(attr.key.as_ref());
+                            let value = String::from_utf8_lossy(&attr.value);
+
+                            if key == "system" {
+								tcheck_system = value.to_string();
+                            }
+                        }
+					}
+					"Group" => {
                         for attr in e.attributes() {
-                            let attr = attr.context("Failed to parse CCI attribute")?;
+                            let attr = attr.context("Failed to parse STIG group attribute")?;
                             let key = String::from_utf8_lossy(attr.key.as_ref());
                             let value = String::from_utf8_lossy(&attr.value);
 
@@ -937,6 +956,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 
                             if key == "system" {
 								if value == "http://cyber.mil/cci" {
+									in_ident_cci = true;
 									capture_text = true;
 									text_buffer.clear();
 								}
@@ -946,7 +966,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 					"Rule" => {
 						in_rule = true;
 						for attr in e.attributes() {
-                            let attr = attr.context("Failed to parse ident attribute")?;
+                            let attr = attr.context("Failed to parse rule attribute")?;
                             let key = String::from_utf8_lossy(attr.key.as_ref());
                             let value = String::from_utf8_lossy(&attr.value);
 
@@ -964,7 +984,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 							}
                         }
 					}
-					"title" | "description" | "fixtext" | "check-content" => {
+					"title" | "description" | "fixtext" | "check-content" | "version" => {
 						capture_text = true;
 						text_buffer.clear();
 					}
@@ -1008,17 +1028,54 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 					}
 					"ident" => {
 						if in_rule {
-							let tcci_str = text_buffer.trim().to_string();
-							if tcci_str.len() > 0 {
-								tccis.push(tcci_str.parse::<u32>().unwrap_or(0));
+							if in_ident_cci {
+								let tcci_str = text_buffer.trim_start_matches(['C', 'I', '-']).to_string();
+								if tcci_str.len() > 0 {
+									tccis.push(tcci_str.parse::<u32>().unwrap_or(0));
+								}
+								in_ident_cci = false;
 							}
 						}
 					}
 					"description" => {
 						if in_rule {
 							// Create a new Reader for the embedded XML content
-							let tBuf = text_buffer.replace("&gt;", ">").replace("&lt;", "<");
-							let mut desc_reader = Reader::from_str(&tBuf);
+							let mut tbuf = text_buffer.trim().to_string();
+							//fix extraneous xml tags in the description
+							tbuf = tbuf.replace("<", "&lt;").replace(">", "&gt;");
+							//fix actual xml tags in description
+							tbuf = tbuf
+									.replace("&lt;VulnDiscussion&gt;", "<VulnDiscussion>")
+									.replace("&lt;/VulnDiscussion&gt;", "</VulnDiscussion>")
+									.replace("&lt;FalseNegatives&gt;", "<FalseNegatives>")
+									.replace("&lt;/FalseNegatives&gt;", "</FalseNegatives>")
+									.replace("&lt;FalsePositives&gt;", "<FalsePositives>")
+									.replace("&lt;/FalsePositives&gt;", "</FalsePositives>")
+									.replace("&lt;Documentable&gt;", "<Documentable>")
+									.replace("&lt;/Documentable&gt;", "</Documentable>")
+									.replace("&lt;Mitigations&gt;", "<Mitigations>")
+									.replace("&lt;/Mitigations&gt;", "</Mitigations>")
+									.replace("&lt;PotentialImpacts&gt;", "<PotentialImpacts>")
+									.replace("&lt;/PotentialImpacts&gt;", "</PotentialImpacts>")
+									.replace("&lt;ThirdPartyTools&gt;", "<ThirdPartyTools>")
+									.replace("&lt;/ThirdPartyTools&gt;", "</ThirdPartyTools>")
+									.replace("&lt;MitigationControl&gt;", "<MitigationControl>")
+									.replace("&lt;/MitigationControl&gt;", "</MitigationControl>")
+									.replace("&lt;Severity&gt;", "<Severity>")
+									.replace("&lt;/Severity&gt;", "</Severity>")
+									.replace("&lt;SeverityOverrideGuidance&gt;", "<SeverityOverrideGuidance>")
+									.replace("&lt;/SeverityOverrideGuidance&gt;", "</SeverityOverrideGuidance>")
+									.replace("&lt;CheckContent&gt;", "<CheckContent>")
+									.replace("&lt;/CheckContent&gt;", "</CheckContent>")
+									.replace("&lt;CheckSystem&gt;", "<CheckSystem>")
+									.replace("&lt;/CheckSystem&gt;", "</CheckSystem>")
+									.replace("&lt;IAControls&gt;", "<IAControls>")
+									.replace("&lt;/IAControls&gt;", "</IAControls>")
+									.replace("&lt;Responsibility&gt;", "<Responsibility>")
+									.replace("&lt;/Responsibility&gt;", "</Responsibility>")
+									.replace("&lt;References&gt;", "<References>")
+									.replace("&lt;/References&gt;", "</References>");
+							let mut desc_reader = Reader::from_str(&tbuf);
 							desc_reader.trim_text(true);
 							
 							let mut desc_buf = Vec::new();
@@ -1078,13 +1135,13 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
                             "INSERT INTO STIGCheck (
                                 CheckContent, CheckSys, DISAId, Documentable, 
                                 FalseNegatives, FalsePositives, FixText, IAControls,
-                                Ident, MitigationControl, Mitigations, PotentialImpacts,
+                                MitigationControl, Mitigations, PotentialImpacts,
                                 Reference, Responsibility, STIGId, Severity,
                                 SeverityOverrideGuidance, ThirdPartyTools, Title,
                                 VULNGroupId, VULNId, Version, VulnDiscussion, Weight
                             ) VALUES (
                                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                                ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
+                                ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23
                             )",
                             params![
                                 tcheck_content,
@@ -1095,7 +1152,6 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
                                 tfalse_positives,
                                 tfix_text,
                                 tia_controls,
-                                tident,
                                 tmitigation_control,
                                 tmitigations,
                                 tpotential_impacts,
@@ -1113,6 +1169,22 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
                                 tweight
                             ],
                         )?;
+						let check_id = conn.last_insert_rowid();
+						
+						// Insert CCI mappings
+						for cci_id in &tccis {
+							if *cci_id != 0 {
+								conn.execute(
+									"INSERT INTO MapSTIGCheckCCI (STIGCheckID, CCIId) 
+									SELECT ?1, ?2 
+									WHERE EXISTS (SELECT 1 FROM RMFCCI WHERE id = ?2)",
+									params![check_id, cci_id],
+								)?;
+							}
+						}
+						
+						// Clear the CCIs collection
+						tccis.clear();
                     }
 					"fixtext" => {
 						if in_rule {
@@ -1122,6 +1194,11 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 					"check-content" => {
 						if in_rule {
 							tcheck_content = text_buffer.trim().to_string();
+						}
+					}
+					"version" => {
+						if in_rule {
+							tversion = text_buffer.trim().to_string();
 						}
 					}
                     _ => {}
@@ -1242,6 +1319,11 @@ fn display_database_summary(conn: &Connection) -> Result<()> {
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM STIGCheck")?;
 	let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
 	println!("STIG Checks: {}", check_count);
+
+	// Count STIG Checks
+	let mut stmt = conn.prepare("SELECT COUNT(*) FROM MapSTIGCheckCCI")?;
+	let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
+	println!("STIG Check to CCI Mappings: {}", check_count);
 
 	Ok(())
 }
