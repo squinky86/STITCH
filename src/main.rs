@@ -469,6 +469,47 @@ FOREIGN KEY(STIGCheckID) REFERENCES STIGCheck(id) ON DELETE CASCADE
 	)
 	.context("Failed to create STIG table")?;
 
+	conn.execute(
+		"CREATE TABLE IF NOT EXISTS Vulnerability (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+NVDId TEXT,
+Description TEXT,
+attackVector TEXT,
+attackComplexity TEXT,
+attackRequirements TEXT,
+privilegesRequired TEXT,
+userInteraction TEXT,
+vulnConfidentialityImpact TEXT,
+vulnIntegrityImpact TEXT,
+vulnAvailabilityImpact TEXT,
+subConfidentialityImpact TEXT,
+subIntegrityImpact TEXT,
+subAvailabilityImpact TEXT,
+exploitMaturity TEXT,
+confidentialityRequirement TEXT,
+integrityRequirement TEXT,
+availabilityRequirement TEXT,
+modifiedAttackVector TEXT,
+modifiedAttackComplexity TEXT,
+modifiedAttackRequirements TEXT,
+modifiedPrivilegesRequired TEXT,
+modifiedUserInteraction TEXT,
+modifiedVulnConfidentialityImpact TEXT,
+modifiedVulnIntegrityImpact TEXT,
+modifiedVulnAvailabilityImpact TEXT,
+modifiedSubConfidentialityImpact TEXT,
+modifiedSubIntegrityImpact TEXT,
+modifiedSubAvailabilityImpact TEXT,
+Safety TEXT,
+Automatable TEXT,
+Recovery TEXT,
+valueDensity TEXT,
+vulnerabilityResponseEffort TEXT,
+providerUrgency TEXT
+);",
+		[],
+	)
+	.context("Failed to create NVD table")?;
 	Ok(conn)
 }
 
