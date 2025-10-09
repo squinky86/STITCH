@@ -459,15 +459,15 @@ FOREIGN KEY(STIGId) REFERENCES STIG(id) ON DELETE CASCADE
 
 	conn.execute(
 		"CREATE TABLE IF NOT EXISTS MapSTIGCheckCCI (
-STIGCheckID INTEGER,
+STIGCheckId INTEGER,
 CCIId INTEGER,
 PRIMARY KEY(STIGCheckId,CCIId),
-FOREIGN KEY(CCIId) REFERENCES RMFCCI(id) ON DELETE CASCADE,
-FOREIGN KEY(STIGCheckID) REFERENCES STIGCheck(id) ON DELETE CASCADE
+FOREIGN KEY(STIGCheckId) REFERENCES STIGCheck(id) ON DELETE CASCADE,
+FOREIGN KEY(CCIId) REFERENCES RMFCCI(id)
 );",
 		[],
 	)
-	.context("Failed to create STIG table")?;
+	.context("Failed to create MapSTIGCheckCCI table")?;
 
 	conn.execute(
 		"CREATE TABLE IF NOT EXISTS Vulnerability (
@@ -510,6 +510,19 @@ providerUrgency TEXT
 		[],
 	)
 	.context("Failed to create NVD table")?;
+
+	conn.execute(
+		"CREATE TABLE IF NOT EXISTS MapVulnerabilityWeakness (
+VulnerabilityId INTEGER,
+WeaknessId INTEGER,
+PRIMARY KEY(VulnerabilityId,WeaknessId),
+FOREIGN KEY(VulnerabilityId) REFERENCES Vulnerability(id) ON DELETE CASCADE,
+FOREIGN KEY(WeaknessId) REFERENCES Weakness(id)
+);",
+		[],
+	)
+	.context("Failed to create MapNVDWeakness table")?;
+
 	Ok(conn)
 }
 
@@ -1280,7 +1293,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 						for cci_id in &tccis {
 							if *cci_id != 0 {
 								conn.execute(
-									"INSERT INTO MapSTIGCheckCCI (STIGCheckID, CCIId) 
+									"INSERT INTO MapSTIGCheckCCI (STIGCheckId, CCIId) 
 									SELECT ?1, ?2 
 									WHERE EXISTS (SELECT 1 FROM RMFCCI WHERE id = ?2)",
 									params![check_id, cci_id],
