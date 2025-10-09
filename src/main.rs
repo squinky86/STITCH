@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use futures_util::{FutureExt, StreamExt};
+use futures_util::{StreamExt};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use reqwest::Client;
@@ -10,6 +10,8 @@ use tokio::fs;
 use zip::ZipArchive;
 use tempfile::NamedTempFile;
 use regex::Regex;
+use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -124,6 +126,10 @@ async fn main() -> Result<()> {
 	let mut stig_temp_zip = NamedTempFile::new()?;
 	let mut stig_temp_xml = NamedTempFile::new()?;
 
+	//CWE and STIG mapping
+	const STIGWE_YAML_URL: &str = "https://raw.githubusercontent.com/squinky86/STIGWE/refs/heads/main/mappings/mappings.yaml";
+	let mut stigwe_temp_yaml = NamedTempFile::new()?;
+
 	println!("RuskTeX Database Builder v0.1.0");
 
 	// Download the CWE XML file
@@ -178,6 +184,16 @@ async fn main() -> Result<()> {
         std::process::exit(1);
 	}
 
+	// Download the STIGWE YAML file
+	if stigwe_temp_yaml.path().exists() {
+		print!("Downloading STIGWE YAML file…");
+		download_file(&STIGWE_YAML_URL, &mut stigwe_temp_yaml, &args).await?;
+		println!("✓");
+	} else {
+		eprintln!("Unable to create temporary STIGWE YAML file.");
+		std::process::exit(1);
+	}
+
 	// Create database
 	print!("Creating SQLite database:");
 	let conn = create_database(&args.output)?;
@@ -192,12 +208,18 @@ async fn main() -> Result<()> {
 	rmf_parse_and_populate_database(&mut rmf_temp_xml, &conn).await?;
 
 	//Parse CCI XML and populate database
-	println!("Parsing DISA CCI XML and populating database:");
+	print!("Parsing DISA CCI XML and populating database…");
 	cci_parse_and_populate_database(&mut cci_temp_xml, &conn).await?;
+	println!("✓");
 
 	// Parse STIG XML and populate database
-	println!("Parsing DISA STIG XML and populating database:");
+	print!("Parsing DISA STIG XML and populating database…");
 	stig_parse_and_populate_database(&mut stig_temp_xml, &conn).await?;
+	println!("✓");
+
+	// Parse STIGWE YAML and populate database
+	println!("Parsing STIGWE YAML and populating database:");
+	stigwe_parse_and_populate_database(&mut stigwe_temp_yaml, &conn).await?;
 
 	// Display summary
 	display_database_summary(&conn)?;
@@ -286,7 +308,9 @@ category BOOLEAN NOT NULL DEFAULT 0 CHECK(category IN (0, 1)),
 view BOOLEAN NOT NULL DEFAULT 0 CHECK(view IN (0, 1)),
 confidentiality BOOLEAN NOT NULL DEFAULT 0 CHECK(confidentiality IN (0, 1)),
 integrity BOOLEAN NOT NULL DEFAULT 0 CHECK(integrity IN (0, 1)),
-availability BOOLEAN NOT NULL DEFAULT 0 CHECK(availability IN (0, 1))
+availability BOOLEAN NOT NULL DEFAULT 0 CHECK(availability IN (0, 1)),
+STIGCheckId INTEGER,
+FOREIGN KEY(STIGCheckId) REFERENCES STIGCheck(id)
 );",
 		[],
 	)
@@ -776,7 +800,7 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
                             let value = String::from_utf8_lossy(&attr.value);
 
                             if key == "id" {
-								let tmp_cci = value.trim_start_matches(['C', 'I', '-']);
+								let tmp_cci = value.trim_start_matches("CCI-");
                                 current_cci_id = tmp_cci.parse::<u32>()
                                     .context("Failed to parse CCI ID")?;
                             }
@@ -898,7 +922,6 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
     let mut tpotential_impacts  = String::new();
     let mut treference  = String::new();
     let mut tresponsibility  = String::new();
-    let mut tstig_id: u32 = 0;
     let mut tseverity  = String::new();
     let mut tseverity_override_guidance  = String::new();
     let mut tthird_party_tools  = String::new();
@@ -1029,7 +1052,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 					"ident" => {
 						if in_rule {
 							if in_ident_cci {
-								let tcci_str = text_buffer.trim_start_matches(['C', 'I', '-']).to_string();
+								let tcci_str = text_buffer.trim_start_matches("CCI-").to_string();
 								if tcci_str.len() > 0 {
 									tccis.push(tcci_str.parse::<u32>().unwrap_or(0));
 								}
@@ -1157,7 +1180,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
                                 tpotential_impacts,
                                 treference,
                                 tresponsibility,
-                                1,
+                                stig_id,
                                 tseverity,
                                 tseverity_override_guidance,
                                 tthird_party_tools,
@@ -1211,6 +1234,86 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
         }
         buf.clear();
     }
+
+    Ok(())
+}
+
+//store data of YAML parsing
+#[derive(Debug, Deserialize)]
+struct Mappings {
+    stig_to_cwe: HashMap<String, STIGToCWE>,
+    cwe_to_stig: HashMap<String, CWEToSTIG>,
+}
+
+#[derive(Debug, Deserialize)]
+struct STIGToCWE {
+    cwe_ids: Vec<MappingWithDefault>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CWEToSTIG {
+    stig_ids: Vec<MappingWithDefault>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MappingWithDefault {
+    id: String,
+    default: bool,
+}
+
+async fn stigwe_parse_and_populate_database(yaml: &mut NamedTempFile, conn: &Connection) -> Result<()> {
+    let yaml_content = fs::read_to_string(yaml.path())
+        .await
+        .context("Failed to read YAML file")?;
+
+    let mappings: Mappings = serde_yaml::from_str(&yaml_content)
+        .context("Failed to parse YAML content")?;
+
+	print!("\tInserting {} STIG→CWE mappings…", mappings.stig_to_cwe.len());
+    // Update STIGCheck CWEId where default mapping exists
+    for (stig_id, mapping) in mappings.stig_to_cwe.iter() {
+        for cwe_mapping in mapping.cwe_ids.iter() {
+            if cwe_mapping.default {
+                let cwe_id = cwe_mapping.id.trim_start_matches("CWE-")
+                    .parse::<u32>()
+                    .context("Failed to parse CWE ID")?;
+                
+				conn.execute(
+                    "UPDATE STIGCheck 
+                     SET CWEId = ?1 
+                     WHERE DISAId LIKE ?2 
+                     AND CWEId IS NULL",
+					params![cwe_id, format!("{}%", stig_id)],
+                )?;
+            }
+        }
+    }
+	println!("✓");
+
+	print!("\tInserting {} CWE→STIG mappings…", mappings.cwe_to_stig.len());
+    // Process CWE to STIG mappings
+    for (cwe_id, mapping) in mappings.cwe_to_stig.iter() {
+        for stig_mapping in mapping.stig_ids.iter() {
+            if stig_mapping.default {
+                let cwe_num = cwe_id.trim_start_matches("CWE-")
+                    .parse::<u32>()
+                    .context("Failed to parse CWE ID")?;
+                
+                conn.execute(
+                    "UPDATE Weakness 
+                     SET STIGCheckId = (
+                         SELECT id 
+                         FROM STIGCheck 
+                         WHERE DISAId LIKE ?1
+                         LIMIT 1
+                     )
+                     WHERE id = ?2",
+                    params![format!("{}%", stig_mapping.id), cwe_num],
+                )?;
+            }
+        }
+    }
+	println!("✓");
 
     Ok(())
 }
@@ -1324,6 +1427,15 @@ fn display_database_summary(conn: &Connection) -> Result<()> {
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM MapSTIGCheckCCI")?;
 	let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
 	println!("STIG Check to CCI Mappings: {}", check_count);
+
+	// Count Mappings
+	let mut stmt = conn.prepare("SELECT COUNT(*) FROM STIGCheck WHERE CWEId IS NOT NULL")?;
+    let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
+    println!("STIG→CWE Mappings: {}", check_count);
+
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM Weakness WHERE STIGCheckId IS NOT NULL")?;
+    let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
+    println!("CWE→STIG Mappings: {}", check_count);
 
 	Ok(())
 }
