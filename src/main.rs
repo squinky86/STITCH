@@ -1,17 +1,19 @@
 use anyhow::{Context, Result};
+use chrono::{Utc, Datelike};
 use clap::Parser;
 use futures_util::{StreamExt};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use reqwest::Client;
 use rusqlite::{params, Connection};
-use std::io::Write;
+use std::io::{Read, Write};
 use tokio::fs;
 use zip::ZipArchive;
 use tempfile::NamedTempFile;
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
+use flate2::read::GzDecoder;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -103,6 +105,24 @@ struct STIGCheck {
     weight: f64,
 }
 
+async fn decompress_gzip(input: &mut NamedTempFile, output: &mut NamedTempFile) -> Result<()> {
+    let mut gz = GzDecoder::new(std::fs::File::open(input.path())?);
+    std::io::copy(&mut gz, output.as_file_mut())?;
+    output.as_file_mut().sync_all()?;
+    Ok(())
+}
+
+async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, conn: &Connection) -> Result<()> {
+    let json_content = fs::read_to_string(json_file.path())
+        .await
+        .context("Failed to read NVD JSON file")?;
+    
+    // TODO: Parse JSON and populate database
+    
+    
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
 	let args = Args::parse();
@@ -132,7 +152,7 @@ async fn main() -> Result<()> {
 
 	println!("RuskTeX Database Builder v0.1.0");
 
-	// Download the CWE XML file
+	// Download the CWE XML file…
     if cwe_temp_zip.path().exists() {
         print!("Downloading CWE XML file from MITRE…");
         download_file(&CWE_XML_URL, &mut cwe_temp_zip, &args).await?;
@@ -220,6 +240,27 @@ async fn main() -> Result<()> {
 	// Parse STIGWE YAML and populate database
 	println!("Parsing STIGWE YAML and populating database:");
 	stigwe_parse_and_populate_database(&mut stigwe_temp_yaml, &conn).await?;
+
+	// Download and process NVD data
+	println!("Obtaining and parsing NVD data:");
+	let current_datetime = Utc::now();
+	for year in 2002..current_datetime.year() {
+		println!("\tProcessing NVD data for year {}:", year);
+		let mut nvd_temp_json_gz = NamedTempFile::new()?;
+		let mut nvd_temp_json = NamedTempFile::new()?;
+		let nvd_url = format!("https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-{}.json.gz", year);
+		print!("\t\tDownloading {} NVD JSON…", year);
+		download_file(&nvd_url, &mut nvd_temp_json_gz, &args).await?;
+		println!("✓");
+
+		print!("\t\tDeflating {} NVD JSON…", year);
+		decompress_gzip(&mut nvd_temp_json_gz, &mut nvd_temp_json).await?;
+		println!("✓");
+
+		print!("\t\tParsing {} NVD JSON data…", year);
+		nvd_parse_and_populate_database(&mut nvd_temp_json, &conn).await?;
+		println!("✓");
+	}
 
 	// Display summary
 	display_database_summary(&conn)?;
@@ -732,7 +773,7 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 	println!("✓");
 
 	// Insert RMF Controls
-    print!("\tInserting {} RMF Controls", controls.len());
+    print!("\tInserting {} RMF Controls…", controls.len());
     for control in &controls {
 		let mut tmp_sql : String = String::new();
 		tmp_sql.push_str("INSERT OR REPLACE INTO RMFControl (RMFFamilyId, number, name, description) VALUES ((SELECT id FROM RMFFamily WHERE abbr = $1), ?2, ?3, ?4)");
