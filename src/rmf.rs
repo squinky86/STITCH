@@ -25,11 +25,7 @@ struct RMFControl {
 }
 
 pub async fn process_rmf(conn: &Connection, args: &Args) -> Result<()> {
-	//RMF Control Data
-	let mut rmf_temp_xml = NamedTempFile::new()?;
-    
-    // Download RMF Data
-
+	// Download RMF Data
     print!("Downloading RMF XML file from NIST…");
     let mut rmf_temp_xml = NamedTempFile::new()?;
     download_file("https://csrc.nist.gov/CSRC/media/Projects/risk-management/800-53%20Downloads/800-53r5/SP_800-53_v5_1_XML.xml", &mut rmf_temp_xml, &args).await?;
