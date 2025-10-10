@@ -1,72 +1,21 @@
+mod common;
+mod cwe;
+mod rmf;
+
+use crate::common::{decompress_gzip,download_file,extract_xml_from_zip,Args};
+use crate::cwe::process_cwe;
+use crate::rmf::process_rmf;
 use anyhow::{Context, Result};
 use chrono::{Utc, Datelike};
 use clap::Parser;
-use futures_util::{StreamExt};
 use quick_xml::events::Event;
 use quick_xml::Reader;
-use reqwest::Client;
 use rusqlite::{params, Connection};
-use std::io::{Read, Write};
 use tokio::fs;
-use zip::ZipArchive;
 use tempfile::NamedTempFile;
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
-use flate2::read::GzDecoder;
-
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-	/// Output database file path
-	#[arg(short, long, default_value = "rusktex.db")]
-	output: String,
-
-	/// Force download even if file exists
-	#[arg(short, long)]
-	force: bool,
-
-	/// Verbose output
-	#[arg(short, long)]
-	verbose: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-struct Weakness {
-	id: u32,
-	name: String,
-	description: String,
-	category: bool, // is a category?
-	view: bool,     // is a view?
-	extended_description: String,
-	confidentiality: bool,
-	integrity: bool,
-	availability: bool,
-}
-
-#[derive(Debug, Clone)]
-struct WeaknessRelationship {
-	source_id: u32,
-	target_id: u32,
-	nature: String,
-	view_id: u32,
-}
-
-#[derive(Debug, Clone, Default)]
-struct RMFFamily {
-	id: u32,
-	abbr: String,
-	name: String,
-}
-
-#[derive(Debug, Clone, Default)]
-struct RMFControl {
-	id: u32,
-	rmf_family_id: u32,
-	number: String,
-	name: String,
-	description: String,
-}
 
 #[derive(Debug, Clone, Default)]
 struct STIG {
@@ -105,13 +54,6 @@ struct STIGCheck {
     weight: f64,
 }
 
-async fn decompress_gzip(input: &mut NamedTempFile, output: &mut NamedTempFile) -> Result<()> {
-    let mut gz = GzDecoder::new(std::fs::File::open(input.path())?);
-    std::io::copy(&mut gz, output.as_file_mut())?;
-    output.as_file_mut().sync_all()?;
-    Ok(())
-}
-
 async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, conn: &Connection) -> Result<()> {
     let json_content = fs::read_to_string(json_file.path())
         .await
@@ -126,15 +68,6 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, conn: &C
 #[tokio::main]
 async fn main() -> Result<()> {
 	let args = Args::parse();
-
-	//CWE Data
-	const CWE_XML_URL: &str = "https://cwe.mitre.org/data/xml/cwec_latest.xml.zip";
-	let mut cwe_temp_zip = NamedTempFile::new()?;
-	let mut cwe_temp_xml = NamedTempFile::new()?;
-
-	//RMF Control Data
-	const RMF_XML_URL: &str = "https://csrc.nist.gov/CSRC/media/Projects/risk-management/800-53%20Downloads/800-53r5/SP_800-53_v5_1_XML.xml";
-	let mut rmf_temp_xml = NamedTempFile::new()?;
 
 	//RMF CCI Data
 	const CCI_XML_URL: &str = "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/CCI+List.zip";
@@ -152,29 +85,16 @@ async fn main() -> Result<()> {
 
 	println!("RuskTeX Database Builder v0.1.0");
 
-	// Download the CWE XML file…
-    if cwe_temp_zip.path().exists() {
-        print!("Downloading CWE XML file from MITRE…");
-        download_file(&CWE_XML_URL, &mut cwe_temp_zip, &args).await?;
-        println!("✓");
+	//DB Structure
+	print!("Creating SQLite database:");
+	let conn = create_database(&args.output)?;
+	println!("SQLite database created ✓ ({})", args.output);
 
-        print!("Extracting CWE XML file…");
-        extract_xml_from_zip(&cwe_temp_zip, &mut cwe_temp_xml, &args)?;
-        println!("✓");
-    } else {
-        eprintln!("Unable to create temporary CWE file.");
-        std::process::exit(1);
-    }
+	//CWE Data
+	process_cwe(&conn, &args).await?;
 
-	// Download the RMF XML file
-	if rmf_temp_xml.path().exists() {
-		print!("Downloading NIST RMF XML file from NIST…");
-		download_file(&RMF_XML_URL, &mut rmf_temp_xml, &args).await?;
-		println!("✓");
-	} else {
-		eprintln!("Unable to create temporary RMF file.");
-		std::process::exit(1);
-	}
+	//RMF Data
+	process_rmf(&conn, &args).await?;
 
 	// Download the CCI XML file
 	if cci_temp_zip.path().exists() {
@@ -213,19 +133,6 @@ async fn main() -> Result<()> {
 		eprintln!("Unable to create temporary STIGWE YAML file.");
 		std::process::exit(1);
 	}
-
-	// Create database
-	print!("Creating SQLite database:");
-	let conn = create_database(&args.output)?;
-	println!("SQLite database created ✓ ({})", args.output);
-
-	// Parse CWE XML and populate database
-	println!("Parsing CWE XML and populating database:");
-	cwe_parse_and_populate_database(&mut cwe_temp_xml, &conn, &args).await?;
-
-	// Parse RMF XML and populate database
-	println!("Parsing NIST RMF XML and populating database:");
-	rmf_parse_and_populate_database(&mut rmf_temp_xml, &conn).await?;
 
 	//Parse CCI XML and populate database
 	print!("Parsing DISA CCI XML and populating database…");
@@ -267,65 +174,6 @@ async fn main() -> Result<()> {
 
 	println!("\nCWE database build completed successfully: {}", args.output);
 	Ok(())
-}
-
-async fn download_file(url: &str, file: &mut NamedTempFile, args: &Args) -> Result<()> {
-    let client = Client::new();
-
-    if args.verbose {
-        println!("\nConnecting to: {}", url);
-    }
-
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .context("Failed to download CWE XML")?;
-
-    let total_size = response.content_length().unwrap_or(0);
-    if args.verbose && total_size > 0 {
-        println!("File size: {} bytes", total_size);
-    }
-
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("Failed to read chunk")?;
-        file.as_file_mut().write_all(&chunk)
-            .context("Failed to write chunk to file")?;
-    }
-    
-    file.as_file_mut().sync_all().context("Failed to sync file to disk")?;
-
-    Ok(())
-}
-
-fn extract_xml_from_zip(zip_file: &NamedTempFile, xml_file: &mut NamedTempFile, args: &Args) -> Result<()> {
-    let file = std::fs::File::open(zip_file.path()).context("Failed to open zip file")?;
-    let mut archive = ZipArchive::new(file).context("Failed to read zip archive")?;
-
-    if args.verbose {
-        println!("\nExtracting zip file...");
-    }
-
-    for i in 0..archive.len() {
-        match archive.by_index(i) {
-            Ok(mut file) => {
-                if file.name().ends_with(".xml") {
-                    std::io::copy(&mut file, xml_file.as_file_mut())
-                        .context("Failed to extract XML file")?;
-                    break;
-                }
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Could not extract file index {} in the downloaded zip file: {}", 
-                    i, e
-                ));
-            }
-        }
-    }
-
-    Ok(())
 }
 
 fn create_database(db_path: &str) -> Result<Connection> {
@@ -524,321 +372,6 @@ FOREIGN KEY(WeaknessId) REFERENCES Weakness(id)
 	.context("Failed to create MapNVDWeakness table")?;
 
 	Ok(conn)
-}
-
-async fn cwe_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection, args: &Args) -> Result<()> {
-	let xml_content = fs::read_to_string(xml.path())
-		.await
-		.context("Failed to read XML file")?;
-
-	let mut reader = Reader::from_str(&xml_content);
-	reader.trim_text(true);
-
-	let mut buf = Vec::new();
-	let mut cwe_entries: Vec<Weakness> = Vec::new();
-	let mut relationships: Vec<WeaknessRelationship> = Vec::new();
-
-	let mut current_weakness: Option<Weakness> = None;
-	let mut text_buffer = String::new();
-	let mut current_element = String::new();
-	let mut capture_text = false;
-
-	loop {
-		match reader.read_event_into(&mut buf) {
-			Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e))=> {
-				current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
-
-				match current_element.as_str() {
-					"Weakness" | "Category" | "View" => {
-						let mut weakness = Weakness::default();
-						if current_element == "Category" {
-							weakness.category = true;
-						}
-						if current_element == "View" {
-							weakness.view = true;
-						}
-
-						// Parse attributes
-						for attr in e.attributes() {
-							let attr =
-								attr.context("Failed to parse weakness attribute")?;
-							let key = String::from_utf8_lossy(attr.key.as_ref());
-							let value = String::from_utf8_lossy(&attr.value);
-
-							match key.as_ref() {
-								"ID" => {
-									weakness.id = value.parse::<u32>().unwrap_or(0)
-								}
-								"Name" => weakness.name = value.to_string(),
-								_ => {}
-							}
-						}
-						current_weakness = Some(weakness);
-					}
-					"Description" | "Extended_Description" | "Scope" => {
-						capture_text = true;
-						text_buffer.clear();
-					}
-					"Related_Weakness" => {
-						if let Some(weakness) = &current_weakness {
-							let mut relationship = WeaknessRelationship {
-								source_id: weakness.id,
-								target_id: 0,
-								nature: String::new(),
-								view_id: 0,
-							};
-
-							for attr in e.attributes() {
-								let attr = attr
-									.context("Failed to parse relationship attribute")?;
-								let key = String::from_utf8_lossy(attr.key.as_ref());
-								let value = String::from_utf8_lossy(&attr.value);
-
-								match key.as_ref() {
-									"CWE_ID" => {
-										relationship.target_id =
-											value.parse::<u32>().unwrap_or(0)
-									}
-									"Nature" => relationship.nature = value.to_string(),
-									"View_ID" => {
-										relationship.view_id =
-											value.parse::<u32>().unwrap_or(0)
-									}
-									_ => {}
-								}
-							}
-							if relationship.target_id != 0
-								&& !relationship.nature.is_empty()
-							{
-								relationships.push(relationship);
-							}
-						}
-					}
-					_ => {}
-				}
-			}
-			Ok(Event::Text(e)) => {
-				if capture_text {
-					text_buffer.push_str(&e.unescape().unwrap_or_default());
-				}
-			}
-			Ok(Event::End(ref e)) => {
-				let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-				match tag_name.as_str() {
-					"Weakness" | "Category" | "View" => {
-						if let Some(weakness) = current_weakness.take() {
-							if args.verbose {
-								println!("Parsed: CWE-{}", weakness.id);
-							}
-							cwe_entries.push(weakness);
-						}
-					}
-					"Description" => {
-						if let Some(weakness) = current_weakness.as_mut() {
-							weakness.description = text_buffer.trim().to_string();
-						}
-						capture_text = false;
-					}
-					"Extended_Description" => {
-						if let Some(weakness) = current_weakness.as_mut() {
-							weakness.extended_description =
-								text_buffer.trim().to_string();
-						}
-						capture_text = false;
-					}
-					"Scope" => {
-						if let Some(weakness) = current_weakness.as_mut() {
-							match text_buffer.trim() {
-								"Confidentiality" => weakness.confidentiality = true,
-								"Integrity" => weakness.integrity = true,
-								"Availability" => weakness.availability = true,
-								_ => {}
-							}
-						}
-						capture_text = false;
-					}
-					_ => {}
-				}
-				current_element.clear();
-			}
-			Ok(Event::Eof) => break,
-			Err(e) => return Err(anyhow::anyhow!("XML parsing error: {}", e)),
-			_ => {}
-		}
-		buf.clear();
-	}
-
-	cwe_insert_data_to_database(conn, &cwe_entries, &relationships)?;
-
-	Ok(())
-}
-
-async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection) -> Result<()> {
-    let xml_content = fs::read_to_string(xml.path())
-        .await
-        .context("Failed to read RMF XML file")?;
-    let mut reader = Reader::from_str(&xml_content);
-    reader.trim_text(true);
-
-    let mut families: Vec<RMFFamily> = Vec::new();
-    let mut controls: Vec<RMFControl> = Vec::new();
-    let mut buf = Vec::new();
-
-	let mut text_buffer = String::new();
-	let mut current_element = String::new();
-	let mut capture_text = false;
-
-	let mut tmp_family: String = String::new();
-	let mut tmp_number: String = String::new();
-	let mut tmp_title: String = String::new();
-	let mut tmp_p: String = String::new();
-	let mut tmp_e_number: String = String::new();
-	let mut tmp_e_title: String = String::new();
-	let mut tmp_e_p: String = String::new();
-	let mut in_enhancements: bool = false;
-    
-	loop {
-		match reader.read_event_into(&mut buf) {
-			Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e))=> {
-				current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
-
-				match current_element.as_str() {
-					"family" | "description" | "number" | "title" | "p" => {
-						capture_text = true;
-						text_buffer.clear();
-					}
-					"control-enhancements" => {
-						in_enhancements = true;
-					}
-					_ => {}
-				}
-			}
-			Ok(Event::Text(e)) => {
-				if capture_text {
-					text_buffer.push_str(&e.unescape().unwrap_or_default());
-				}
-			}
-			Ok(Event::End(ref e)) => {
-				let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-				match tag_name.as_str() {
-					"family" =>
-					{
-						tmp_family = text_buffer.trim().to_string();
-					}
-					"number" => {
-						let tmp_num2 = text_buffer.trim().to_string();
-						// Regex that matches a NIST RMF control or enhancement (e.g., AC-03 or AC-03(1))
-    					// ^\s*[A-Z]{2}-\d{1,2}(?:\(\d{1,2}\))?\s*$
-						let re = Regex::new(r"^\s*[A-Z]{2}-\d{1,2}(?:\(\d{1,2}\))?\s*$").expect("Invalid Regex pattern");
-						if re.is_match(&tmp_num2) {
-							if in_enhancements {
-								tmp_e_number = tmp_num2.clone();
-							}
-							else {
-								tmp_number = tmp_num2.clone();
-							}
-							let family = RMFFamily {
-								id: 0,
-								abbr: tmp_num2.chars().take(2).collect(),
-								name: tmp_family.clone()
-							};
-							if !families.iter().any(|f| f.abbr == family.abbr) {
-								families.push(family);
-							}
-						}
-						else {
-							//we are in a line item within the description
-							if in_enhancements {
-								if tmp_e_p.len() > 0 {
-									tmp_e_p.push_str("\n");
-								}
-								tmp_e_p.push_str(&tmp_num2.trim());
-								tmp_e_p.push_str(" ");
-							}
-							else {
-								if tmp_p.len() > 0 {
-									tmp_p.push_str("\n");
-								}
-								tmp_p.push_str(&tmp_num2.trim());
-								tmp_p.push_str(" ");
-							}
-						}
-					}
-					"title" => {
-						if in_enhancements {
-							tmp_e_title = text_buffer.trim().to_string();
-						}
-						else {
-							tmp_title = text_buffer.trim().to_string();
-						}
-					}
-					"description" => {
-						if in_enhancements {
-							tmp_e_p.push_str(&text_buffer.trim().to_string().replace("<p>", "").replace("</p>", "\n").trim());
-						}
-						else {
-							tmp_p.push_str(&text_buffer.trim().to_string().replace("<p>", "").replace("</p>", "\n").trim());
-						}
-					}
-					"control-enhancements" => {
-						in_enhancements = false;
-					}
-					"controls:control" => {
-						let c: RMFControl = RMFControl {
-							id: 0,
-							rmf_family_id: 0,
-							number: tmp_number.clone(),
-							name: tmp_title.clone(),
-							description: tmp_p.clone()
-						};
-						controls.push(c);
-						tmp_p = String::new();
-					}
-					"control-enhancement" => {
-						let c: RMFControl = RMFControl {
-							id: 0,
-							rmf_family_id: 0,
-							number: tmp_e_number.clone(),
-							name: tmp_e_title.clone(),
-							description: tmp_e_p.clone()
-						};
-						controls.push(c);
-						tmp_e_p = String::new();
-					}
-					_ => {}
-				}
-				current_element.clear();
-			}
-			Ok(Event::Eof) => break,
-			Err(e) => return Err(anyhow::anyhow!("RMF XML parsing error: {}", e)),
-			_ => {}
-		}
-		buf.clear();
-	}
-
-    // Insert RMF Families
-    print!("\tInserting {} RMF Families…", families.len());
-    for family in &families {
-        conn.execute(
-            "INSERT OR REPLACE INTO RMFFamily (abbr, name) VALUES (?1, ?2)",
-            params![family.abbr, family.name],
-        ).context("Failed to insert RMF Family")?;
-    }
-	println!("✓");
-
-	// Insert RMF Controls
-    print!("\tInserting {} RMF Controls…", controls.len());
-    for control in &controls {
-		let mut tmp_sql : String = String::new();
-		tmp_sql.push_str("INSERT OR REPLACE INTO RMFControl (RMFFamilyId, number, name, description) VALUES ((SELECT id FROM RMFFamily WHERE abbr = $1), ?2, ?3, ?4)");
-		conn.execute(
-			&tmp_sql,
-            params![&control.number.chars().take(2).collect::<String>(), control.number, control.name, control.description],
-        ).context("Failed to insert RMF Control")?;
-    }
-	println!("✓");
-
-    Ok(())
 }
 
 fn extract_control_identifier(input: &str) -> Option<String> {
@@ -1198,13 +731,11 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 							
 							let mut desc_buf = Vec::new();
 							let mut desc_text = String::new();
-							let mut desc_element = String::new();
 							let mut desc_capture = false;
 					
 							loop {
 								match desc_reader.read_event_into(&mut desc_buf) {
 									Ok(Event::Start(ref e)) => {
-										desc_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
 										desc_capture = true;
 										desc_text.clear();
 									}
@@ -1411,58 +942,6 @@ async fn stigwe_parse_and_populate_database(yaml: &mut NamedTempFile, conn: &Con
 	println!("✓");
 
     Ok(())
-}
-
-fn cwe_insert_data_to_database(
-	conn: &Connection,
-	entries: &[Weakness],
-	relationships: &[WeaknessRelationship],
-) -> Result<()> {
-	// Insert CWE entries
-	print!("\tInserting {} CWE entries…", entries.len());
-	let mut tx = conn.unchecked_transaction()?;
-	{
-		let mut stmt = tx.prepare_cached(
-			"INSERT OR REPLACE INTO Weakness 
-             (id, name, description, extended_description, category, view, confidentiality, integrity, availability) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-		)?;
-
-		for entry in entries {
-			stmt.execute(params![
-				entry.id,
-				entry.name,
-				entry.description,
-				entry.extended_description,
-				entry.category,
-				entry.view,
-				entry.confidentiality,
-				entry.integrity,
-				entry.availability
-			])?;
-		}
-	}
-	tx.commit()?;
-	println!("✓");
-
-	// Insert relationships
-	print!("\tInserting {} relationships…", relationships.len());
-	tx = conn.unchecked_transaction()?;
-	{
-		let mut stmt = tx.prepare_cached(
-			"INSERT OR IGNORE INTO WeaknessRelationship 
-             (source_id, target_id, nature, view_id) 
-             VALUES (?1, ?2, ?3, ?4)",
-		)?;
-
-		for rel in relationships {
-			stmt.execute(params![rel.source_id, rel.target_id, rel.nature, rel.view_id])?;
-		}
-	}
-	tx.commit()?;
-	println!("✓");
-
-	Ok(())
 }
 
 fn display_database_summary(conn: &Connection) -> Result<()> {
