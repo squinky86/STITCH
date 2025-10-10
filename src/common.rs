@@ -60,7 +60,7 @@ pub async fn download_file(url: &str, file: &mut NamedTempFile, args: &Args) -> 
     Ok(())
 }
 
-pub fn extract_xml_from_zip(zip_file: &NamedTempFile, xml_file: &mut NamedTempFile, args: &Args) -> Result<()> {
+pub fn extract_from_zip(zip_file: &NamedTempFile, xml_file: &mut NamedTempFile, ext: &str, args: &Args) -> Result<()> {
     let file = std::fs::File::open(zip_file.path()).context("Failed to open zip file")?;
     let mut archive = ZipArchive::new(file).context("Failed to read zip archive")?;
 
@@ -71,9 +71,9 @@ pub fn extract_xml_from_zip(zip_file: &NamedTempFile, xml_file: &mut NamedTempFi
     for i in 0..archive.len() {
         match archive.by_index(i) {
             Ok(mut file) => {
-                if file.name().ends_with(".xml") {
+                if file.name().ends_with(ext) {
                     std::io::copy(&mut file, xml_file.as_file_mut())
-                        .context("Failed to extract XML file")?;
+                        .context(format!("Failed to extract {} file", ext))?;
                     break;
                 }
             }

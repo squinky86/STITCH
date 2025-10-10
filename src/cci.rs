@@ -1,4 +1,4 @@
-use crate::common::{download_file,extract_xml_from_zip,Args};
+use crate::common::{download_file,extract_from_zip,Args};
 
 use anyhow::{Context, Result};
 use quick_xml::events::Event;
@@ -17,7 +17,7 @@ pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
     println!("✓");
 
     print!("Extracting CCI XML file…");
-    extract_xml_from_zip(&cci_temp_zip, &mut cci_temp_xml, &args)?;
+    extract_from_zip(&cci_temp_zip, &mut cci_temp_xml, ".xml", &args)?;
     println!("✓");
 
     // Parse CCI XML and populate database

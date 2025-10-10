@@ -1,4 +1,4 @@
-use crate::common::{download_file,extract_xml_from_zip,Args};
+use crate::common::{download_file,extract_from_zip,Args};
 
 use tempfile::NamedTempFile;
 use anyhow::{Context, Result};
@@ -37,7 +37,7 @@ pub async fn process_cwe(conn: &Connection, args: &Args) -> Result<()> {
     println!("✓");
 
     print!("Extracting CWE XML file…");
-    extract_xml_from_zip(&cwe_temp_zip, &mut cwe_temp_xml, &args)?;
+    extract_from_zip(&cwe_temp_zip, &mut cwe_temp_xml, ".xml", &args)?;
     println!("✓");
 
     // Parse and populate database

@@ -1,4 +1,4 @@
-use crate::common::{download_file,extract_xml_from_zip,Args};
+use crate::common::{download_file,extract_from_zip,Args};
 
 use anyhow::{Context, Result};
 use quick_xml::events::Event;
@@ -52,7 +52,7 @@ pub async fn process_stig(conn: &Connection, args: &Args) -> Result<()> {
     println!("✓");
 
     print!("Extracting STIG XML file…");
-    extract_xml_from_zip(&stig_temp_zip, &mut stig_temp_xml, &args)?;
+    extract_from_zip(&stig_temp_zip, &mut stig_temp_xml, ".xml", &args)?;
     println!("✓");
 
     // Parse STIG XML and populate database
