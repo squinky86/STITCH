@@ -6,6 +6,7 @@ use rusqlite::{Connection,params};
 use tokio::fs;
 use tempfile::NamedTempFile;
 use serde::Deserialize;
+use indicatif::{ProgressBar,ProgressStyle};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -185,22 +186,25 @@ pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
 		decompress_gzip(&mut nvd_temp_json_gz, &mut nvd_temp_json).await?;
 		println!("✓");
 
-		print!("\t\tParsing {} NVD JSON data…", year);
-		nvd_parse_and_populate_database(&mut nvd_temp_json, &conn).await?;
-		println!("✓");
+		nvd_parse_and_populate_database(&mut nvd_temp_json, year, &conn).await?;
 	}
 
     Ok(())
 }
 
-async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, conn: &Connection) -> Result<()> {
+async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i32, conn: &Connection) -> Result<()> {
     let json_content = fs::read_to_string(json_file.path())
         .await
         .context("Failed to read NVD JSON file")?;
     
     let feed: NvdCveFeed = serde_json::from_str(&json_content).unwrap();
 
-    for v in feed.vulnerabilities {
+	let bar = ProgressBar::new(feed.total_results as u64);
+    bar.set_style(ProgressStyle::default_bar()
+    	.template("{prefix} {bar:20.cyan/blue} {msg}")
+    	.expect("Failed to create progress style"));
+	bar.set_prefix(format!("\t\tProcessing {} JSON…", year));
+	for v in feed.vulnerabilities {
         let cve = &v.cve;
 
         let description = cve.descriptions
@@ -317,7 +321,27 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, conn: &C
                 ""
             ],
         )?;
+		let check_id = conn.last_insert_rowid();
+		let mut inserted: Vec<i32> = Vec::new();
+        if let Some(weaknesses) = &cve.weaknesses {
+            for weakness in weaknesses {
+                for description in weakness.description.iter().filter(|d| d.lang == "en" && d.value.starts_with("CWE-")) {
+                    let tmp_weakness = description.value.trim_start_matches("CWE-").parse::<i32>().unwrap();
+					if !inserted.contains(&tmp_weakness) {
+						conn.execute(
+                    	    "INSERT INTO MapVulnerabilityWeakness (VulnerabilityId, WeaknessId) VALUES (?1, ?2)",
+                    	    params![check_id, tmp_weakness],
+                    	)?;
+						inserted.push(tmp_weakness);
+					}
+                }
+            }
+        }
+
+		bar.inc(1);
     }
+
+	bar.finish_with_message(format!("✓ ({})", feed.total_results));
     
     Ok(())
 }
