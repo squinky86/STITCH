@@ -57,7 +57,7 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
         .context("Failed to read CCI XML file")?;
 
     let mut reader = Reader::from_str(&xml_content);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
 
     let mut buf = Vec::new();
     let mut current_element = String::new();
@@ -124,7 +124,7 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
             }
             Ok(Event::Text(e)) => {
                 if capture_text {
-                    text_buffer.push_str(&e.unescape().unwrap_or_default());
+                    text_buffer.push_str(&e.decode().unwrap_or_default());
                 }
             }
             Ok(Event::End(ref e)) => {

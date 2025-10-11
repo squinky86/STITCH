@@ -8,19 +8,19 @@ license = "MIT"
 repository = "https://github.com/squinky86/RuskTeX"
 
 [dependencies]
-tokio = { version = "1.0", features = ["full"] }
-reqwest = { version = "0.11", features = ["stream"] }
-rusqlite = { version = "0.29", features = ["bundled"] }
-quick-xml = { version = "0.31", features = ["serialize"] }
+tokio = { version = "1.47", features = ["full"] }
+reqwest = { version = "0.12", features = ["stream"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+quick-xml = { version = "0.38", features = ["serialize"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1.0"
-zip = "0.6"
+zip = "6.0"
 anyhow = "1.0"
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 futures-util = "0.3"
-tempfile = "3.10"
-regex = "1.11"
+tempfile = "3.23"
+regex = "1.12"
 chrono = "0.4"
-flate2 = "1.0"
-indicatif = "0.17"
+flate2 = "1.1"
+indicatif = "0.18"

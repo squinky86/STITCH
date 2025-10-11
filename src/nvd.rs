@@ -57,6 +57,8 @@ pub struct Metrics {
     pub cvss_metric_v30: Option<Vec<CvssMetricV30>>,
     #[serde(rename = "cvssMetricV31")]
     pub cvss_metric_v31: Option<Vec<CvssMetricV31>>,
+	#[serde(rename = "cvssMetricV40")]
+	pub cvss_metric_v40: Option<Vec<CvssMetricV40>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,6 +116,15 @@ pub struct CvssMetricV31 {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CvssMetricV40 {
+    pub source: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub cvss_data: CvssDataV40,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CvssDataV3 {
     pub version: String,
     pub vector_string: String,
@@ -127,6 +138,90 @@ pub struct CvssDataV3 {
     pub availability_impact: String,
     pub base_score: f64,
     pub base_severity: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CvssDataV40 {
+    pub version: String,
+    pub vector_string: String,
+    pub base_score: f64,
+    pub base_severity: String,
+	pub attack_vector: String,
+	pub attack_complexity: String,
+	pub attack_requirements: String,
+	pub privileges_required: String,
+	pub user_interaction: String,
+	pub vuln_confidentiality_impact: String,
+	pub vuln_integrity_impact: String,
+	pub vuln_availability_impact: String,
+	pub sub_confidentiality_impact: String,
+	pub sub_integrity_impact: String,
+	pub sub_availability_impact: String,
+	pub exploit_maturity: String,
+	pub confidentiality_requirement: String,
+	pub integrity_requirement: String,
+	pub availability_requirement: String,
+	pub modified_attack_vector: String,
+	pub modified_attack_complexity: String,
+	pub modified_attack_requirements: String,
+	pub modified_privileges_required: String,
+	pub modified_user_interaction: String,
+	pub modified_vuln_confidentiality_impact: String,
+	pub modified_vuln_integrity_impact: String,
+	pub modified_vuln_availability_impact: String,
+	pub modified_sub_confidentiality_impact: String,
+	pub modified_sub_integrity_impact: String,
+	pub modified_sub_availability_impact: String,
+	pub safety: String,
+	pub automatable: String,
+	pub recovery: String,
+	pub value_density: String,
+	pub vulnerability_response_effort: String,
+	pub provider_urgency: String,
+}
+
+impl CvssDataV40 {
+	pub fn new() -> Self {
+		Self {
+			version: String::new(),
+			vector_string: String::new(),
+			base_score: 0.0,
+			base_severity: String::new(),
+			attack_vector: String::new(),
+			attack_complexity: String::new(),
+			attack_requirements: String::new(),
+			privileges_required: String::new(),
+			user_interaction: String::new(),
+			vuln_confidentiality_impact: String::new(),
+			vuln_integrity_impact: String::new(),
+			vuln_availability_impact: String::new(),
+			sub_confidentiality_impact: String::new(),
+			sub_integrity_impact: String::new(),
+			sub_availability_impact: String::new(),
+			exploit_maturity: String::new(),
+			confidentiality_requirement: String::new(),
+			integrity_requirement: String::new(),
+			availability_requirement: String::new(),
+			modified_attack_vector: String::new(),
+			modified_attack_complexity: String::new(),
+			modified_attack_requirements: String::new(),
+			modified_privileges_required: String::new(),
+			modified_user_interaction: String::new(),
+			modified_vuln_confidentiality_impact: String::new(),
+			modified_vuln_integrity_impact: String::new(),
+			modified_vuln_availability_impact: String::new(),
+			modified_sub_confidentiality_impact: String::new(),
+			modified_sub_integrity_impact: String::new(),
+			modified_sub_availability_impact: String::new(),
+			safety: String::new(),
+			automatable: String::new(),
+			recovery: String::new(),
+			value_density: String::new(),
+			vulnerability_response_effort: String::new(),
+			provider_urgency: String::new(),
+		}
+	}
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,6 +301,30 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 	bar.set_prefix(format!("\t\tProcessing {} JSON…", year));
 	for v in feed.vulnerabilities {
         let cve = &v.cve;
+
+		//store cvss data to insert into database
+		let mut cvss_v4 = CvssDataV40::new();
+		
+		if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v40 {
+			if !cvss_metrics.is_empty() {
+				cvss_v4 = cvss_metrics[0].cvss_data.clone();
+			}
+		}
+		else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v31 {
+			if !cvss_metrics.is_empty() {
+				//convert v3.1 to v4.0
+			}
+		}
+		else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v30 {
+			if !cvss_metrics.is_empty() {
+				//convert v3.0 to v4.0
+			}
+		}
+		else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v2 {
+			if !cvss_metrics.is_empty() {
+				//convert v2.0 to v4.0
+			}
+		}
 
         let description = cve.descriptions
             .iter()
@@ -287,38 +406,38 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
             params![
                 cve.id,
                 description,
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                ""
+                cvss_v4.attack_vector,
+				cvss_v4.attack_complexity,
+				cvss_v4.attack_requirements,
+				cvss_v4.privileges_required,
+				cvss_v4.user_interaction,
+				cvss_v4.vuln_confidentiality_impact,
+				cvss_v4.vuln_integrity_impact,
+				cvss_v4.vuln_availability_impact,
+				cvss_v4.sub_confidentiality_impact,
+				cvss_v4.sub_integrity_impact,
+				cvss_v4.sub_availability_impact,
+				cvss_v4.exploit_maturity,
+				cvss_v4.confidentiality_requirement,
+				cvss_v4.integrity_requirement,
+				cvss_v4.availability_requirement,
+				cvss_v4.modified_attack_vector,
+				cvss_v4.modified_attack_complexity,
+				cvss_v4.modified_attack_requirements,
+				cvss_v4.modified_privileges_required,
+				cvss_v4.modified_user_interaction,
+				cvss_v4.modified_vuln_confidentiality_impact,
+				cvss_v4.modified_vuln_integrity_impact,
+				cvss_v4.modified_vuln_availability_impact,
+				cvss_v4.modified_sub_confidentiality_impact,
+				cvss_v4.modified_sub_integrity_impact,
+				cvss_v4.modified_sub_availability_impact,
+				cvss_v4.safety,
+				cvss_v4.automatable,
+				cvss_v4.recovery,
+				cvss_v4.value_density,
+				cvss_v4.vulnerability_response_effort,
+				cvss_v4.provider_urgency
             ],
         )?;
 		let check_id = conn.last_insert_rowid();

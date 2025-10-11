@@ -69,7 +69,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
         .context("Failed to read STIG XML file")?;
 
     let mut reader = Reader::from_str(&xml_content);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
 
     let mut buf = Vec::new();
     let mut text_buffer = String::new();
@@ -187,7 +187,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
             }
             Ok(Event::Text(e)) => {
                 if capture_text {
-                    text_buffer.push_str(&e.unescape().unwrap_or_default());
+                    text_buffer.push_str(&e.decode().unwrap_or_default());
                 }
             }
             Ok(Event::End(ref e)) => {
@@ -251,7 +251,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 									.replace("&lt;References&gt;", "<References>")
 									.replace("&lt;/References&gt;", "</References>");
 							let mut desc_reader = Reader::from_str(&tbuf);
-							desc_reader.trim_text(true);
+							desc_reader.config_mut().trim_text(true);
 							
 							let mut desc_buf = Vec::new();
 							let mut desc_text = String::new();
@@ -265,7 +265,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 									}
 									Ok(Event::Text(e)) => {
 										if desc_capture {
-											desc_text.push_str(&e.unescape().unwrap_or_default());
+											desc_text.push_str(&e.decode().unwrap_or_default());
 										}
 									}
 									Ok(Event::End(ref e)) => {
