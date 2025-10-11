@@ -45,11 +45,9 @@ struct STIGCheck {
 }
 
 pub async fn process_stig(conn: &Connection, args: &Args) -> Result<()> {
-	print!("Downloading STIG XML file from DISA…");
     let mut stig_temp_zip = NamedTempFile::new()?;
 	let mut stig_temp_xml = NamedTempFile::new()?;
-    download_file("https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_ASD_V6R3_STIG.zip", &mut stig_temp_zip, &args).await?;
-    println!("✓");
+    download_file("https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_ASD_V6R3_STIG.zip", &mut stig_temp_zip, false, "Downloading STIG XML file from DISA…".to_string(), "✓".to_string(), &args).await?;
 
     print!("Extracting STIG XML file…");
     extract_from_zip(&stig_temp_zip, &mut stig_temp_xml, ".xml", &args)?;

@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use futures_util::{StreamExt};
 use std::io::{Write};
+use indicatif::{ProgressBar,ProgressStyle};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -30,8 +31,10 @@ pub async fn decompress_gzip(input: &mut NamedTempFile, output: &mut NamedTempFi
     Ok(())
 }
 
-pub async fn download_file(url: &str, file: &mut NamedTempFile, args: &Args) -> Result<()> {
-    let client = Client::new();
+pub async fn download_file(url: &str, file: &mut NamedTempFile, silent: bool, prefix: String, postfix: String, args: &Args) -> Result<()> {
+	let mut progress_bar: Option<ProgressBar> = None;
+	
+	let client = Client::new();
 
     if args.verbose {
         println!("\nConnecting to: {}", url);
@@ -48,12 +51,34 @@ pub async fn download_file(url: &str, file: &mut NamedTempFile, args: &Args) -> 
         println!("File size: {} bytes", total_size);
     }
 
+	if !silent {
+		let pb = ProgressBar::new(total_size);
+		pb.set_style(ProgressStyle::default_bar()
+    	.template("{prefix} {bar:20.cyan/blue} {msg}")
+    	.expect("Failed to create progress style"));
+
+		pb.set_prefix(prefix);
+
+		progress_bar = Some(pb);
+	}
+
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("Failed to read chunk")?;
         file.as_file_mut().write_all(&chunk)
             .context("Failed to write chunk to file")?;
+		if !silent {
+			if let Some(pb) = &progress_bar {
+				pb.inc(chunk.len() as u64);
+			}
+		}
     }
+
+	if !silent {
+		if let Some(pb) = &progress_bar {
+			pb.finish_with_message(postfix);
+		}
+	}
     
     file.as_file_mut().sync_all().context("Failed to sync file to disk")?;
 

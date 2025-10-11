@@ -13,8 +13,7 @@ pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
 	print!("Downloading CCI XML file from DISA…");
 	let mut cci_temp_zip = NamedTempFile::new()?;
 	let mut cci_temp_xml = NamedTempFile::new()?;
-    download_file("https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/CCI+List.zip", &mut cci_temp_zip, &args).await?;
-    println!("✓");
+    download_file("https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/CCI+List.zip", &mut cci_temp_zip, false, "Downloading CCI XML file from DISA…".to_string(), "✓".to_string(), &args).await?;
 
     print!("Extracting CCI XML file…");
     extract_from_zip(&cci_temp_zip, &mut cci_temp_xml, ".xml", &args)?;

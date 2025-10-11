@@ -32,9 +32,7 @@ pub async fn process_cwe(conn: &Connection, args: &Args) -> Result<()> {
     // Download and extract CWE XML
     let mut cwe_temp_zip = NamedTempFile::new()?;
     let mut cwe_temp_xml = NamedTempFile::new()?;
-    print!("Downloading CWE XML file from MITRE…");
-    download_file("https://cwe.mitre.org/data/xml/cwec_latest.xml.zip", &mut cwe_temp_zip, &args).await?;
-    println!("✓");
+    download_file("https://cwe.mitre.org/data/xml/cwec_latest.xml.zip", &mut cwe_temp_zip, false, "Downloading CWE XML file from MITRE…".to_string(), "✓".to_string(), &args).await?;
 
     print!("Extracting CWE XML file…");
     extract_from_zip(&cwe_temp_zip, &mut cwe_temp_xml, ".xml", &args)?;
