@@ -6,6 +6,7 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 use rusqlite::{params, Connection};
 use tokio::fs;
+use indicatif::{ProgressBar,ProgressStyle};
 
 #[derive(Debug, Clone, Default)]
 struct Weakness {
@@ -197,7 +198,13 @@ fn cwe_insert_data_to_database(
 	relationships: &[WeaknessRelationship],
 ) -> Result<()> {
 	// Insert CWE entries
-	print!("\tInserting {} CWE entries…", entries.len());
+	let bar = ProgressBar::new(entries.len() as u64);
+	let mut on: u32 = 0;
+    bar.set_style(ProgressStyle::default_bar()
+    	.template("{prefix} {bar:20.cyan/blue} {msg}")
+    	.expect("Failed to create progress style"));
+	bar.set_prefix("Inserting CWEs…");
+	bar.set_message(format!("{}/{}", on, entries.len()));
 	let mut tx = conn.unchecked_transaction()?;
 	{
 		let mut stmt = tx.prepare_cached(
@@ -207,6 +214,9 @@ fn cwe_insert_data_to_database(
 		)?;
 
 		for entry in entries {
+			on += 1;
+			bar.set_message(format!("{}/{}", on, entries.len()));
+			bar.tick();
 			stmt.execute(params![
 				entry.id,
 				entry.name,
@@ -221,10 +231,16 @@ fn cwe_insert_data_to_database(
 		}
 	}
 	tx.commit()?;
-	println!("✓");
+	bar.finish_with_message(format!("✓ ({})", entries.len()));
 
 	// Insert relationships
-	print!("\tInserting {} relationships…", relationships.len());
+	let bar2 = ProgressBar::new(relationships.len() as u64);
+	on = 0;
+    bar2.set_style(ProgressStyle::default_bar()
+    	.template("{prefix} {bar:20.cyan/blue} {msg}")
+    	.expect("Failed to create progress style"));
+	bar2.set_prefix("Inserting CWE Relationshps…");
+	bar2.set_message(format!("{}/{}", on, relationships.len()));
 	tx = conn.unchecked_transaction()?;
 	{
 		let mut stmt = tx.prepare_cached(
@@ -234,11 +250,14 @@ fn cwe_insert_data_to_database(
 		)?;
 
 		for rel in relationships {
+			on += 1;
+			bar2.set_message(format!("{}/{}", on, relationships.len()));
+			bar2.tick();
 			stmt.execute(params![rel.source_id, rel.target_id, rel.nature, rel.view_id])?;
 		}
 	}
 	tx.commit()?;
-	println!("✓");
+	bar2.finish_with_message(format!("✓ ({})", relationships.len()));
 
 	Ok(())
 }
