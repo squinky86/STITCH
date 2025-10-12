@@ -173,8 +173,11 @@ pub struct CvssDataV40 {
 	pub modified_sub_confidentiality_impact: String,
 	pub modified_sub_integrity_impact: String,
 	pub modified_sub_availability_impact: String,
+	#[serde(rename = "Safety")]
 	pub safety: String,
+	#[serde(rename = "Automatable")]
 	pub automatable: String,
+	#[serde(rename = "Recovery")]
 	pub recovery: String,
 	pub value_density: String,
 	pub vulnerability_response_effort: String,
@@ -188,38 +191,38 @@ impl CvssDataV40 {
 			vector_string: String::new(),
 			base_score: 0.0,
 			base_severity: String::new(),
-			attack_vector: String::new(),
-			attack_complexity: String::new(),
-			attack_requirements: String::new(),
-			privileges_required: String::new(),
-			user_interaction: String::new(),
-			vuln_confidentiality_impact: String::new(),
-			vuln_integrity_impact: String::new(),
-			vuln_availability_impact: String::new(),
-			sub_confidentiality_impact: String::new(),
-			sub_integrity_impact: String::new(),
-			sub_availability_impact: String::new(),
-			exploit_maturity: String::new(),
-			confidentiality_requirement: String::new(),
-			integrity_requirement: String::new(),
-			availability_requirement: String::new(),
-			modified_attack_vector: String::new(),
-			modified_attack_complexity: String::new(),
-			modified_attack_requirements: String::new(),
-			modified_privileges_required: String::new(),
-			modified_user_interaction: String::new(),
-			modified_vuln_confidentiality_impact: String::new(),
-			modified_vuln_integrity_impact: String::new(),
-			modified_vuln_availability_impact: String::new(),
-			modified_sub_confidentiality_impact: String::new(),
-			modified_sub_integrity_impact: String::new(),
-			modified_sub_availability_impact: String::new(),
-			safety: String::new(),
-			automatable: String::new(),
-			recovery: String::new(),
-			value_density: String::new(),
-			vulnerability_response_effort: String::new(),
-			provider_urgency: String::new(),
+			attack_vector: "NETWORK".to_string(),
+			attack_complexity: "LOW".to_string(),
+			attack_requirements: "NONE".to_string(),
+			privileges_required: "NONE".to_string(),
+			user_interaction: "NONE".to_string(),
+			vuln_confidentiality_impact: "HIGH".to_string(),
+			vuln_integrity_impact: "HIGH".to_string(),
+			vuln_availability_impact: "HIGH".to_string(),
+			sub_confidentiality_impact: "HIGH".to_string(),
+			sub_integrity_impact: "HIGH".to_string(),
+			sub_availability_impact: "HIGH".to_string(),
+			exploit_maturity: "NOT_DEFINED".to_string(),
+			confidentiality_requirement: "NOT_DEFINED".to_string(),
+			integrity_requirement: "NOT_DEFINED".to_string(),
+			availability_requirement: "NOT_DEFINED".to_string(),
+			modified_attack_vector: "NOT_DEFINED".to_string(),
+			modified_attack_complexity: "NOT_DEFINED".to_string(),
+			modified_attack_requirements: "NOT_DEFINED".to_string(),
+			modified_privileges_required: "NOT_DEFINED".to_string(),
+			modified_user_interaction: "NOT_DEFINED".to_string(),
+			modified_vuln_confidentiality_impact: "NOT_DEFINED".to_string(),
+			modified_vuln_integrity_impact: "NOT_DEFINED".to_string(),
+			modified_vuln_availability_impact: "NOT_DEFINED".to_string(),
+			modified_sub_confidentiality_impact: "NOT_DEFINED".to_string(),
+			modified_sub_integrity_impact: "NOT_DEFINED".to_string(),
+			modified_sub_availability_impact: "NOT_DEFINED".to_string(),
+			safety: "NOT_DEFINED".to_string(),
+			automatable: "NOT_DEFINED".to_string(),
+			recovery: "NOT_DEFINED".to_string(),
+			value_density: "NOT_DEFINED".to_string(),
+			vulnerability_response_effort: "NOT_DEFINED".to_string(),
+			provider_urgency: "NOT_DEFINED".to_string(),
 		}
 	}
 }
@@ -268,7 +271,7 @@ pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
 	// Download and process NVD data
 	println!("Obtaining and parsing NVD data:");
 	let current_datetime = Utc::now();
-	for year in 2002..current_datetime.year() {
+	for year in 2002..=current_datetime.year() {
 		println!("\tProcessing NVD data for year {}:", year);
 		let mut nvd_temp_json_gz = NamedTempFile::new()?;
 		let mut nvd_temp_json = NamedTempFile::new()?;
@@ -293,118 +296,130 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
     let feed: NvdCveFeed = serde_json::from_str(&json_content).unwrap();
 
 	let bar = ProgressBar::new(feed.total_results as u64);
+	let mut on: u32 = 0;
     bar.set_style(ProgressStyle::default_bar()
     	.template("{prefix} {bar:20.cyan/blue} {msg}")
     	.expect("Failed to create progress style"));
 	bar.set_prefix(format!("\t\tProcessing {} JSON…", year));
-	for v in feed.vulnerabilities {
-        let cve = &v.cve;
+	bar.set_message(format!("{}/{}", on, feed.total_results));
+	let tx = conn.unchecked_transaction()?;
+	{
+		let mut stmt = tx.prepare_cached(
+			"INSERT INTO Vulnerability (
+				NVDId,
+				Description,
+				attackVector,
+				attackComplexity,
+				attackRequirements,
+				privilegesRequired,
+				userInteraction,
+				vulnConfidentialityImpact,
+				vulnIntegrityImpact,
+				vulnAvailabilityImpact,
+				subConfidentialityImpact,
+				subIntegrityImpact,
+				subAvailabilityImpact,
+				exploitMaturity,
+				confidentialityRequirement,
+				integrityRequirement,
+				availabilityRequirement,
+				modifiedAttackVector,
+				modifiedAttackComplexity,
+				modifiedAttackRequirements,
+				modifiedPrivilegesRequired,
+				modifiedUserInteraction,
+				modifiedVulnConfidentialityImpact,
+				modifiedVulnIntegrityImpact,
+				modifiedVulnAvailabilityImpact,
+				modifiedSubConfidentialityImpact,
+				modifiedSubIntegrityImpact,
+				modifiedSubAvailabilityImpact,
+				Safety,
+				Automatable,
+				Recovery,
+				valueDensity,
+				vulnerabilityResponseEffort,
+				providerUrgency
+			) VALUES (
+				?1,
+				?2,
+				?3,
+				?4,
+				?5,
+				?6,
+				?7,
+				?8,
+				?9,
+				?10,
+				?11,
+				?12,
+				?13,
+				?14,
+				?15,
+				?16,
+				?17,
+				?18,
+				?19,
+				?20,
+				?21,
+				?22,
+				?23,
+				?24,
+				?25,
+				?26,
+				?27,
+				?28,
+				?29,
+				?30,
+				?31,
+				?32,
+				?33,
+				?34
+			)",
+		)?;
 
-		//store cvss data to insert into database
-		let mut cvss_v4 = CvssDataV40::new();
-		
-		if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v40 {
-			if !cvss_metrics.is_empty() {
-				cvss_v4 = cvss_metrics[0].cvss_data.clone();
-			}
-		}
-		else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v31 {
-			if !cvss_metrics.is_empty() {
-				//convert v3.1 to v4.0
-			}
-		}
-		else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v30 {
-			if !cvss_metrics.is_empty() {
-				//convert v3.0 to v4.0
-			}
-		}
-		else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v2 {
-			if !cvss_metrics.is_empty() {
-				//convert v2.0 to v4.0
-			}
-		}
+		let mut stmt2 = tx.prepare_cached(
+			"INSERT INTO MapVulnerabilityWeakness (VulnerabilityId, WeaknessId) VALUES ((SELECT id FROM Vulnerability WHERE NVDId = ?1), ?2)",
+		)?;
 
-        let description = cve.descriptions
-            .iter()
-            .find(|d| d.lang == "en")
-            .map_or("No description found.", |d| d.value.as_str());
+		for v in feed.vulnerabilities {
+			on += 1;
+			bar.set_message(format!("{}/{}", on, feed.total_results));
+			let cve = &v.cve;
 
-        conn.execute(
-            "INSERT INTO Vulnerability (
-                NVDId,
-                Description,
-                attackVector,
-                attackComplexity,
-                attackRequirements,
-                privilegesRequired,
-                userInteraction,
-                vulnConfidentialityImpact,
-                vulnIntegrityImpact,
-                vulnAvailabilityImpact,
-                subConfidentialityImpact,
-                subIntegrityImpact,
-                subAvailabilityImpact,
-                exploitMaturity,
-                confidentialityRequirement,
-                integrityRequirement,
-                availabilityRequirement,
-                modifiedAttackVector,
-                modifiedAttackComplexity,
-                modifiedAttackRequirements,
-                modifiedPrivilegesRequired,
-                modifiedUserInteraction,
-                modifiedVulnConfidentialityImpact,
-                modifiedVulnIntegrityImpact,
-                modifiedVulnAvailabilityImpact,
-                modifiedSubConfidentialityImpact,
-                modifiedSubIntegrityImpact,
-                modifiedSubAvailabilityImpact,
-                Safety,
-                Automatable,
-                Recovery,
-                valueDensity,
-                vulnerabilityResponseEffort,
-                providerUrgency
-            ) VALUES (
-                ?1,
-                ?2,
-                ?3,
-                ?4,
-                ?5,
-                ?6,
-                ?7,
-                ?8,
-                ?9,
-                ?10,
-                ?11,
-                ?12,
-                ?13,
-                ?14,
-                ?15,
-                ?16,
-                ?17,
-                ?18,
-                ?19,
-                ?20,
-                ?21,
-                ?22,
-                ?23,
-                ?24,
-                ?25,
-                ?26,
-                ?27,
-                ?28,
-                ?29,
-                ?30,
-                ?31,
-                ?32,
-                ?33,
-                ?34
-            )",
-            params![
-                cve.id,
-                description,
-                cvss_v4.attack_vector,
+			//store cvss data to insert into database
+			let mut cvss_v4 = CvssDataV40::new();
+			
+			if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v40 {
+				if !cvss_metrics.is_empty() {
+					cvss_v4 = cvss_metrics[0].cvss_data.clone();
+				}
+			}
+			else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v31 {
+				if !cvss_metrics.is_empty() {
+					//convert v3.1 to v4.0
+				}
+			}
+			else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v30 {
+				if !cvss_metrics.is_empty() {
+					//convert v3.0 to v4.0
+				}
+			}
+			else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v2 {
+				if !cvss_metrics.is_empty() {
+					//convert v2.0 to v4.0
+				}
+			}
+
+			let description = cve.descriptions
+				.iter()
+				.find(|d| d.lang == "en")
+				.map_or("No description found.", |d| d.value.as_str());
+
+			stmt.execute(params![
+				cve.id,
+				description,
+				cvss_v4.attack_vector,
 				cvss_v4.attack_complexity,
 				cvss_v4.attack_requirements,
 				cvss_v4.privileges_required,
@@ -435,29 +450,26 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 				cvss_v4.recovery,
 				cvss_v4.value_density,
 				cvss_v4.vulnerability_response_effort,
-				cvss_v4.provider_urgency
-            ],
-        )?;
-		let check_id = conn.last_insert_rowid();
-		let mut inserted: Vec<i32> = Vec::new();
-        if let Some(weaknesses) = &cve.weaknesses {
-            for weakness in weaknesses {
-                for description in weakness.description.iter().filter(|d| d.lang == "en" && d.value.starts_with("CWE-")) {
-                    let tmp_weakness = description.value.trim_start_matches("CWE-").parse::<i32>().unwrap();
-					if !inserted.contains(&tmp_weakness) {
-						conn.execute(
-                    	    "INSERT INTO MapVulnerabilityWeakness (VulnerabilityId, WeaknessId) VALUES (?1, ?2)",
-                    	    params![check_id, tmp_weakness],
-                    	)?;
-						inserted.push(tmp_weakness);
+				cvss_v4.provider_urgency],
+			)?;
+			let mut inserted: Vec<i32> = Vec::new();
+			if let Some(weaknesses) = &cve.weaknesses {
+				for weakness in weaknesses {
+					for description in weakness.description.iter().filter(|d| d.lang == "en" && d.value.starts_with("CWE-")) {
+						let tmp_weakness = description.value.trim_start_matches("CWE-").parse::<i32>().unwrap();
+						if !inserted.contains(&tmp_weakness) {
+							stmt2.execute(params![cve.id, tmp_weakness],)?;
+							inserted.push(tmp_weakness);
+						}
 					}
-                }
-            }
-        }
+				}
+			}
 
-		bar.inc(1);
-    }
+			bar.inc(1);
+		}
+	}
 
+	tx.commit()?;
 	bar.finish_with_message(format!("✓ ({})", feed.total_results));
     
     Ok(())

@@ -10,7 +10,6 @@ use regex::Regex;
 
 pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
 	// RMF CCI Data
-	print!("Downloading CCI XML file from DISA…");
 	let mut cci_temp_zip = NamedTempFile::new()?;
 	let mut cci_temp_xml = NamedTempFile::new()?;
     download_file("https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/CCI+List.zip", &mut cci_temp_zip, false, "Downloading CCI XML file from DISA…".to_string(), "✓".to_string(), &args).await?;

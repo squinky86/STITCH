@@ -7,6 +7,7 @@ use rusqlite::{params, Connection};
 use tokio::fs;
 use tempfile::NamedTempFile;
 use regex::Regex;
+use indicatif::{ProgressBar,ProgressStyle};
 
 #[derive(Debug, Clone, Default)]
 struct RMFFamily {
@@ -180,18 +181,36 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 	}
 
     // Insert RMF Families
-    print!("\tInserting {} RMF Families…", families.len());
+	let bar = ProgressBar::new(families.len() as u64);
+	let mut on: u32 = 0;
+    bar.set_style(ProgressStyle::default_bar()
+    	.template("{prefix} {bar:20.cyan/blue} {msg}")
+    	.expect("Failed to create progress style"));
+	bar.set_prefix("Inserting RMF Families…");
+	bar.set_message(format!("{}/{}", on, families.len()));
     for family in &families {
+		on += 1;
+		bar.set_message(format!("{}/{}", on, families.len()));
+		bar.inc(1);
         conn.execute(
             "INSERT OR REPLACE INTO RMFFamily (abbr, name) VALUES (?1, ?2)",
             params![family.abbr, family.name],
         ).context("Failed to insert RMF Family")?;
     }
-	println!("✓");
+	bar.finish_with_message(format!("✓ ({})", families.len()));
 
 	// Insert RMF Controls
-    print!("\tInserting {} RMF Controls…", controls.len());
+	let bar2 = ProgressBar::new(controls.len() as u64);
+	on = 0;
+    bar2.set_style(ProgressStyle::default_bar()
+    	.template("{prefix} {bar:20.cyan/blue} {msg}")
+    	.expect("Failed to create progress style"));
+	bar2.set_prefix("Inserting RMF Controls…");
+	bar2.set_message(format!("{}/{}", on, controls.len()));
     for control in &controls {
+		on += 1;
+		bar2.set_message(format!("{}/{}", on, controls.len()));
+		bar2.inc(1);
 		let mut tmp_sql : String = String::new();
 		tmp_sql.push_str("INSERT OR REPLACE INTO RMFControl (RMFFamilyId, number, name, description) VALUES ((SELECT id FROM RMFFamily WHERE abbr = $1), ?2, ?3, ?4)");
 		conn.execute(
@@ -199,7 +218,7 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
             params![&control.number.chars().take(2).collect::<String>(), control.number, control.name, control.description],
         ).context("Failed to insert RMF Control")?;
     }
-	println!("✓");
+	bar2.finish_with_message(format!("✓ ({})", controls.len()));
 
     Ok(())
 }

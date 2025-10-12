@@ -216,7 +216,7 @@ fn cwe_insert_data_to_database(
 		for entry in entries {
 			on += 1;
 			bar.set_message(format!("{}/{}", on, entries.len()));
-			bar.tick();
+			bar.inc(1);
 			stmt.execute(params![
 				entry.id,
 				entry.name,
@@ -252,7 +252,7 @@ fn cwe_insert_data_to_database(
 		for rel in relationships {
 			on += 1;
 			bar2.set_message(format!("{}/{}", on, relationships.len()));
-			bar2.tick();
+			bar2.inc(1);
 			stmt.execute(params![rel.source_id, rel.target_id, rel.nature, rel.view_id])?;
 		}
 	}
