@@ -7,6 +7,7 @@ use rusqlite::{params, Connection};
 use tokio::fs;
 use tempfile::NamedTempFile;
 use regex::Regex;
+use once_cell::sync::Lazy;
 
 pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
 	// RMF CCI Data
@@ -28,15 +29,21 @@ pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
 
 fn extract_control_identifier(input: &str) -> Option<String> {
     // Regex to match the base control and optional single parenthetical enhancement
-    let re = Regex::new(r"^([A-Z]{2,3}-\d{1,2}(?:\(\d{1,2}\))?)").unwrap();
+	static BASE_CONTROL_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^([A-Z]{2,3}-\d{1,2}(?:\(\d{1,2}\))?)").unwrap()
+    });
+	// Regex to match and capture zero-padded enhancements like (01), (02), etc.
+    static ZERO_PADDED_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"\(0(\d)\)$").unwrap()
+    });
     
     // Find the match
-    let captures = re.captures(input)?;
+    let captures = BASE_CONTROL_RE.captures(input)?;
     
     // Extract the content of the first capturing group (index 1)
     let control_part = captures.get(1)?.as_str().to_string();
 
-    if let Some(captures) = Regex::new(r"\(0(\d)\)$").unwrap().captures(&control_part) {
+    if let Some(captures) = ZERO_PADDED_RE.captures(&control_part) {
         // If it matches (0N), replace the end of the string with (N)
         let digit = captures.get(1).unwrap().as_str();
         let stripped_control = control_part.strip_suffix(&captures.get(0).unwrap().as_str()).unwrap();

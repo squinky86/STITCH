@@ -7,43 +7,6 @@ use rusqlite::{params, Connection};
 use tokio::fs;
 use tempfile::NamedTempFile;
 
-#[derive(Debug, Clone, Default)]
-struct STIG {
-    id: u32,
-    classification: String,
-    description: String,
-    name: String, 
-    version: String,
-}
-
-#[derive(Debug, Clone, Default)]
-struct STIGCheck {
-    id: u32,
-    check_content: String,
-    check_system: String,
-    disa_id: String,
-    documentable: bool,
-    false_negatives: String,
-    false_positives: String,
-    fix_text: String,
-    ia_controls: String,
-    mitigation_control: String,
-    mitigations: String,
-    potential_impacts: String,
-    reference: String,
-    responsibility: String,
-    stig_id: u32,
-    severity: String,
-    severity_override_guidance: String,
-    third_party_tools: String,
-    title: String,
-    vuln_group_id: String,
-    vuln_id: String,
-    version: String,
-    vuln_discussion: String,
-    weight: f64,
-}
-
 pub async fn process_stig(conn: &Connection, args: &Args) -> Result<()> {
     let mut stig_temp_zip = NamedTempFile::new()?;
 	let mut stig_temp_xml = NamedTempFile::new()?;
@@ -71,7 +34,6 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 
     let mut buf = Vec::new();
     let mut text_buffer = String::new();
-    let mut current_element = String::new();
     let mut capture_text = false;
 
 	let mut in_rule = false;
@@ -115,7 +77,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match current_element.as_str() {
                     "check" => {
 						for attr in e.attributes() {

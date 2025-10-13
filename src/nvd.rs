@@ -8,6 +8,7 @@ use tempfile::NamedTempFile;
 use serde::Deserialize;
 use indicatif::{ProgressBar,ProgressStyle};
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NvdCveFeed {
@@ -26,6 +27,7 @@ pub struct Vulnerability {
     pub cve: Cve,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Cve {
@@ -61,6 +63,7 @@ pub struct Metrics {
 	pub cvss_metric_v40: Option<Vec<CvssMetricV40>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CvssMetricV2 {
@@ -78,6 +81,7 @@ pub struct CvssMetricV2 {
     pub user_interaction_required: Option<bool>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CvssData {
@@ -92,6 +96,7 @@ pub struct CvssData {
     pub base_score: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CvssMetricV30 {
@@ -103,6 +108,7 @@ pub struct CvssMetricV30 {
     pub impact_score: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CvssMetricV31 {
@@ -114,6 +120,7 @@ pub struct CvssMetricV31 {
     pub impact_score: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CvssMetricV40 {
@@ -123,6 +130,7 @@ pub struct CvssMetricV40 {
     pub cvss_data: CvssDataV40,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CvssDataV3 {
@@ -140,6 +148,7 @@ pub struct CvssDataV3 {
     pub base_severity: String,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CvssDataV40 {
@@ -227,6 +236,7 @@ impl CvssDataV40 {
 	}
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Weakness {
@@ -236,12 +246,14 @@ pub struct Weakness {
     pub description: Vec<Description>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Configuration {
     pub nodes: Vec<Node>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Node {
@@ -250,6 +262,7 @@ pub struct Node {
     pub cpe_match: Vec<CpeMatch>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CpeMatch {
@@ -258,6 +271,7 @@ pub struct CpeMatch {
     pub match_criteria_id: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reference {
@@ -293,7 +307,7 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
         .await
         .context("Failed to read NVD JSON file")?;
     
-    let feed: NvdCveFeed = serde_json::from_str(&json_content).unwrap();
+    let feed: NvdCveFeed = serde_json::from_str(&json_content).context(format!("Failed to parse NVD JSON for year {}", year))?;
 
 	let bar = ProgressBar::new(feed.total_results as u64);
 	let mut on: u32 = 0;
@@ -556,7 +570,7 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 			if let Some(weaknesses) = &cve.weaknesses {
 				for weakness in weaknesses {
 					for description in weakness.description.iter().filter(|d| d.lang == "en" && d.value.starts_with("CWE-")) {
-						let tmp_weakness = description.value.trim_start_matches("CWE-").parse::<i32>().unwrap();
+						let tmp_weakness = description.value.trim_start_matches("CWE-").parse::<i32>().context(format!("Failed to parse CWE {}", description.value))?;
 						if !inserted.contains(&tmp_weakness) {
 							stmt2.execute(params![cve.id, tmp_weakness],)?;
 							inserted.push(tmp_weakness);
@@ -571,6 +585,7 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 
 	tx.commit()?;
 	bar.finish_with_message(format!("✓ ({})", feed.total_results));
+	println!();
     
     Ok(())
 }

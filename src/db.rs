@@ -229,7 +229,7 @@ pub fn display_database_summary(conn: &Connection) -> Result<()> {
 		})?;
 
 		while let Some(Ok((nature, count))) = rows.next() {
-			p(format!("\t{}: {}", nature, count).to_string().as_ref(), true);;
+			p(format!("\t{}: {}", nature, count).to_string().as_ref(), true);
 		}
 	}
 

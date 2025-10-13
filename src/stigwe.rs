@@ -6,6 +6,7 @@ use tokio::fs;
 use tempfile::NamedTempFile;
 use serde::Deserialize;
 use std::collections::HashMap;
+use indicatif::{ProgressBar,ProgressStyle};
 
 //store data of YAML parsing
 #[derive(Debug, Deserialize)]
@@ -50,10 +51,18 @@ async fn stigwe_parse_and_populate_database(yaml: &mut NamedTempFile, conn: &Con
     let mappings: Mappings = serde_yaml::from_str(&yaml_content)
         .context("Failed to parse YAML content")?;
 
-	p(format!("\tInserting {} STIG→CWE mappings…", mappings.stig_to_cwe.len()).to_string().as_ref(), false);
-    // Update STIGCheck CWEId where default mapping exists
-    for (stig_id, mapping) in mappings.stig_to_cwe.iter() {
-        for cwe_mapping in mapping.cwe_ids.iter() {
+	// Update STIGCheck CWEId where default mapping exists
+	let bar = ProgressBar::new(mappings.stig_to_cwe.len() as u64);
+	let mut on: u32 = 0;
+    bar.set_style(ProgressStyle::default_bar()
+    	.template("{prefix} {bar:20.cyan/blue} {msg}")
+    	.expect("Failed to create progress style"));
+	bar.set_prefix("\tInserting STIG→CWE mappings…");
+	bar.set_message(format!("{}/{}", on, mappings.stig_to_cwe.len()));
+	for (stig_id, mapping) in &mappings.stig_to_cwe {
+		on += 1;
+		bar.set_message(format!("{}/{}", on, mappings.stig_to_cwe.len()));
+        for cwe_mapping in &mapping.cwe_ids {
             if cwe_mapping.default {
                 let cwe_id = cwe_mapping.id.trim_start_matches("CWE-")
                     .parse::<u32>()
@@ -69,12 +78,21 @@ async fn stigwe_parse_and_populate_database(yaml: &mut NamedTempFile, conn: &Con
             }
         }
     }
-	p("✓", true);
+	bar.finish_with_message(format!("✓ ({})", mappings.stig_to_cwe.len()));
+	println!();
 
-	p(format!("\tInserting {} CWE→STIG mappings…", mappings.cwe_to_stig.len()).to_string().as_ref(), false);
-    // Process CWE to STIG mappings
-    for (cwe_id, mapping) in mappings.cwe_to_stig.iter() {
-        for stig_mapping in mapping.stig_ids.iter() {
+	// Process CWE to STIG mappings
+	let bar2 = ProgressBar::new(mappings.cwe_to_stig.len() as u64);
+	on = 0;
+    bar2.set_style(ProgressStyle::default_bar()
+    	.template("{prefix} {bar:20.cyan/blue} {msg}")
+    	.expect("Failed to create progress style"));
+	bar2.set_prefix("\tInserting CWE→STIG mappings…");
+	bar2.set_message(format!("{}/{}", on, mappings.cwe_to_stig.len()));
+	for (cwe_id, mapping) in &mappings.cwe_to_stig {
+		on += 1;
+		bar2.set_message(format!("{}/{}", on, mappings.cwe_to_stig.len()));
+        for stig_mapping in &mapping.stig_ids {
             if stig_mapping.default {
                 let cwe_num = cwe_id.trim_start_matches("CWE-")
                     .parse::<u32>()
@@ -94,7 +112,8 @@ async fn stigwe_parse_and_populate_database(yaml: &mut NamedTempFile, conn: &Con
             }
         }
     }
-	p("✓", true);
+	bar2.finish_with_message(format!("✓ ({})", mappings.cwe_to_stig.len()));
+	println!();
 
     Ok(())
 }

@@ -77,6 +77,7 @@ pub async fn download_file(url: &str, file: &mut NamedTempFile, silent: bool, pr
 	if !silent {
 		if let Some(pb) = &progress_bar {
 			pb.finish_with_message(postfix);
+			println!();
 		}
 	}
     

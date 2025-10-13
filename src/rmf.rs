@@ -9,6 +9,7 @@ use tempfile::NamedTempFile;
 use regex::Regex;
 use indicatif::{ProgressBar,ProgressStyle};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 struct RMFFamily {
 	id: u32,
@@ -16,6 +17,7 @@ struct RMFFamily {
 	name: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 struct RMFControl {
 	id: u32,
@@ -186,7 +188,7 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
     bar.set_style(ProgressStyle::default_bar()
     	.template("{prefix} {bar:20.cyan/blue} {msg}")
     	.expect("Failed to create progress style"));
-	bar.set_prefix("Inserting RMF Families…");
+	bar.set_prefix("\tInserting RMF Families…");
 	bar.set_message(format!("{}/{}", on, families.len()));
     for family in &families {
 		on += 1;
@@ -198,6 +200,7 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
         ).context("Failed to insert RMF Family")?;
     }
 	bar.finish_with_message(format!("✓ ({})", families.len()));
+	println!();
 
 	// Insert RMF Controls
 	let bar2 = ProgressBar::new(controls.len() as u64);
@@ -205,7 +208,7 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
     bar2.set_style(ProgressStyle::default_bar()
     	.template("{prefix} {bar:20.cyan/blue} {msg}")
     	.expect("Failed to create progress style"));
-	bar2.set_prefix("Inserting RMF Controls…");
+	bar2.set_prefix("\tInserting RMF Controls…");
 	bar2.set_message(format!("{}/{}", on, controls.len()));
     for control in &controls {
 		on += 1;
@@ -219,6 +222,7 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
         ).context("Failed to insert RMF Control")?;
     }
 	bar2.finish_with_message(format!("✓ ({})", controls.len()));
+	println!();
 
     Ok(())
 }

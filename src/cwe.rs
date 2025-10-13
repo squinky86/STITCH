@@ -232,6 +232,7 @@ fn cwe_insert_data_to_database(
 	}
 	tx.commit()?;
 	bar.finish_with_message(format!("✓ ({})", entries.len()));
+	println!();
 
 	// Insert relationships
 	let bar2 = ProgressBar::new(relationships.len() as u64);
@@ -258,6 +259,7 @@ fn cwe_insert_data_to_database(
 	}
 	tx.commit()?;
 	bar2.finish_with_message(format!("✓ ({})", relationships.len()));
-
+	println!();
+	
 	Ok(())
 }
