@@ -44,7 +44,7 @@ fn score_from_vector(vector: &str) -> Result<()> {
         println!("Qualitative Severity: {}", vector.score().severity());
         println!("Base Score: {:.1}", vector.score().value());
     } else if vector.starts_with("CVSS:3.1") || vector.starts_with("CVSS:3.0") {
-        let base = cvss::v3::Base::from_str(vector).context("Failed to parse CVSS 3.x vector string")?;
+        let base = Base::from_str(vector).context("Failed to parse CVSS 3.x vector string")?;
         println!("CVSS 3.x Vector: {}", base);
         println!("Qualitative Severity: {}", base.severity());
         println!("Base Score: {:.1}", base.score().value());
@@ -64,18 +64,18 @@ fn score_from_cve(cve_id: &str, db_path: &str) -> Result<()> {
             attackVector, attackComplexity, attackRequirements, privilegesRequired,
             userInteraction, vulnConfidentialityImpact, vulnIntegrityImpact,
             vulnAvailabilityImpact, subConfidentialityImpact, subIntegrityImpact,
-            subAvailabilityImpact
+            subAvailabilityImpact, scoreVersion
          FROM Vulnerability
          WHERE NVDId = ?1",
     )?;
 
     // Query the database for the CVE's metrics
-    let cve_data = stmt.query_row(params![cve_id], |row| {
+    let cve_data = stmt.query_row(params![cve_id.to_uppercase()], |row| {
         Ok((
             row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
             row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, String>(5)?,
             row.get::<_, String>(6)?, row.get::<_, String>(7)?, row.get::<_, String>(8)?,
-            row.get::<_, String>(9)?, row.get::<_, String>(10)?,
+            row.get::<_, String>(9)?, row.get::<_, String>(10)?, row.get::<_, u32>(11)?,
         ))
     }).with_context(|| format!("Could not find CVE '{}' in the database.", cve_id))?;
 
@@ -88,7 +88,7 @@ fn score_from_cve(cve_id: &str, db_path: &str) -> Result<()> {
         map_metric(&cve_data.9)?, map_metric(&cve_data.10)?
     );
 
-    println!("Found CVE: {}. Constructing CVSS 4.0 vector from database...", cve_id);
+    println!("Found CVE: {} using CVSS Version {}. Constructing CVSS 4.0 vector from database: {}.", cve_id, cve_data.11, vector_string);
     score_from_vector(&vector_string)?;
 
     Ok(())
