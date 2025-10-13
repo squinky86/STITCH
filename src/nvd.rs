@@ -447,7 +447,67 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 			}
 			else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v2 {
 				if !cvss_metrics.is_empty() {
-					//convert v2.0 to v4.0
+					let Some(cvss_v2) = cvss_metrics.get(0) else { continue; };
+					cvss_v4.attack_vector = match cvss_v2.cvss_data.access_vector.as_str() {
+						"NETWORK" => "NETWORK".to_string(),
+						"ADJACENT_NETWORK" => "ADJACENT".to_string(),
+						"LOCAL" => "LOCAL".to_string(),
+						_ => "NOT_DEFINED".to_string(),
+					};
+					match cvss_v2.cvss_data.access_complexity.as_str() {
+						"LOW" => {
+							cvss_v4.attack_complexity = "LOW".to_string();
+							cvss_v4.attack_requirements = "NONE".to_string();
+						},
+						"MEDIUM" => {
+							cvss_v4.attack_complexity = "LOW".to_string();
+							cvss_v4.attack_requirements = "PRESENT".to_string();
+						}
+						_ => {
+							cvss_v4.attack_complexity = "HIGH".to_string();
+							cvss_v4.attack_requirements = "PRESENT".to_string();
+						}
+					};
+					cvss_v4.privileges_required = match cvss_v2.cvss_data.authentication.as_str() {
+						"NONE" => "NONE".to_string(),
+						"SINGLE" => "LOW".to_string(),
+						_ => "HIGH".to_string(),
+					};
+					cvss_v4.vuln_confidentiality_impact = match cvss_v2.cvss_data.confidentiality_impact.as_str() {
+						"NONE" => "NONE".to_string(),
+						"PARTIAL" => "LOW".to_string(),
+						_ => "HIGH".to_string(),
+					};
+					cvss_v4.vuln_integrity_impact = match cvss_v2.cvss_data.integrity_impact.as_str() {
+						"NONE" => "NONE".to_string(),
+						"PARTIAL" => "LOW".to_string(),
+						_ => "HIGH".to_string(),
+					};
+					cvss_v4.vuln_availability_impact = match cvss_v2.cvss_data.availability_impact.as_str() {
+						"NONE" => "NONE".to_string(),
+						"PARTIAL" => "LOW".to_string(),
+						_ => "HIGH".to_string(),
+					};
+					if cvss_v2.obtain_all_privilege {
+						cvss_v4.sub_confidentiality_impact = "HIGH".to_string();
+						cvss_v4.sub_integrity_impact = "HIGH".to_string();
+						cvss_v4.sub_availability_impact = "HIGH".to_string();
+					}
+					else if cvss_v2.obtain_user_privilege {
+						cvss_v4.sub_confidentiality_impact = "LOW".to_string();
+						cvss_v4.sub_integrity_impact = "LOW".to_string();
+						cvss_v4.sub_availability_impact = "LOW".to_string();
+					}
+					else if cvss_v2.obtain_other_privilege {
+						cvss_v4.sub_confidentiality_impact = "LOW".to_string();
+						cvss_v4.sub_integrity_impact = "LOW".to_string();
+						cvss_v4.sub_availability_impact = "LOW".to_string();
+					}
+					else {
+						cvss_v4.sub_confidentiality_impact = "NONE".to_string();
+						cvss_v4.sub_integrity_impact = "NONE".to_string();
+						cvss_v4.sub_availability_impact = "NONE".to_string();
+					}
 				}
 			}
 
