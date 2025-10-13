@@ -182,7 +182,8 @@ Automatable TEXT,
 Recovery TEXT,
 valueDensity TEXT,
 vulnerabilityResponseEffort TEXT,
-providerUrgency TEXT
+providerUrgency TEXT,
+hasScore BOOLEAN NOT NULL DEFAULT 0 CHECK(hasScore IN (0, 1))
 );",
 		[],
 	)

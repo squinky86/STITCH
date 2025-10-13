@@ -62,7 +62,8 @@ async fn stigwe_parse_and_populate_database(yaml: &mut NamedTempFile, conn: &Con
 	for (stig_id, mapping) in &mappings.stig_to_cwe {
 		on += 1;
 		bar.set_message(format!("{}/{}", on, mappings.stig_to_cwe.len()));
-        for cwe_mapping in &mapping.cwe_ids {
+        bar.inc(1);
+		for cwe_mapping in &mapping.cwe_ids {
             if cwe_mapping.default {
                 let cwe_id = cwe_mapping.id.trim_start_matches("CWE-")
                     .parse::<u32>()
@@ -92,7 +93,8 @@ async fn stigwe_parse_and_populate_database(yaml: &mut NamedTempFile, conn: &Con
 	for (cwe_id, mapping) in &mappings.cwe_to_stig {
 		on += 1;
 		bar2.set_message(format!("{}/{}", on, mappings.cwe_to_stig.len()));
-        for stig_mapping in &mapping.stig_ids {
+        bar2.inc(1);
+		for stig_mapping in &mapping.stig_ids {
             if stig_mapping.default {
                 let cwe_num = cwe_id.trim_start_matches("CWE-")
                     .parse::<u32>()

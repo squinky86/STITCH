@@ -8,6 +8,7 @@ use tokio::fs;
 use tempfile::NamedTempFile;
 use regex::Regex;
 use once_cell::sync::Lazy;
+use indicatif::{ProgressBar,ProgressStyle};
 
 pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
 	// RMF CCI Data
@@ -20,9 +21,7 @@ pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
     p("✓", true);
 
     // Parse CCI XML and populate database
-	p("Parsing DISA CCI XML and populating database…", false);
 	cci_parse_and_populate_database(&mut cci_temp_xml, &conn).await?;
-	p("✓", true);
 
     Ok(())
 }
@@ -54,7 +53,14 @@ fn extract_control_identifier(input: &str) -> Option<String> {
 }
 
 async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection) -> Result<()> {
-    let xml_content = fs::read_to_string(xml.path())
+    let bar = ProgressBar::new(4349); // estimated number of CCIs
+	let mut on: u32 = 0;
+    bar.set_style(ProgressStyle::default_bar()
+    	.template("{prefix} {bar:20.cyan/blue} {msg}")
+    	.expect("Failed to create progress style"));
+	bar.set_prefix("Parsing CCIs…");
+	bar.set_message(format!("{}/4349?", on));
+	let xml_content = fs::read_to_string(xml.path())
         .await
         .context("Failed to read CCI XML file")?;
 
@@ -150,6 +156,9 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
                             
                             if let Ok(control_id) = stmt.query_row([tmp_control_number], |row| row.get::<_, i64>(0)) {
                                 // Insert the CCI
+								on += 1;
+								bar.set_message(format!("{}/4349?", on));
+								bar.inc(1);
                                 conn.execute(
                                     "INSERT OR REPLACE INTO RMFCCI (id, RMFControlId, definition) VALUES (?1, ?2, ?3)",
                                     params![current_cci_id, control_id, current_definition],
@@ -173,6 +182,8 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
         }
         buf.clear();
     }
+
+	bar.finish_with_message(format!("✓ ({})", on));
 
     Ok(())
 }

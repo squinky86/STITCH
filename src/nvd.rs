@@ -282,7 +282,6 @@ pub struct Reference {
 
 pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
 	// NVD Data
-	// Download and process NVD data
 	p("Obtaining and parsing NVD data:", true);
 	let current_datetime = Utc::now();
 	for year in 2002..=current_datetime.year() {
@@ -353,7 +352,8 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 				Recovery,
 				valueDensity,
 				vulnerabilityResponseEffort,
-				providerUrgency
+				providerUrgency,
+				hasScore
 			) VALUES (
 				?1,
 				?2,
@@ -388,7 +388,8 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 				?31,
 				?32,
 				?33,
-				?34
+				?34,
+				?35
 			)",
 		)?;
 
@@ -403,14 +404,17 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 
 			//store cvss data to insert into database
 			let mut cvss_v4 = CvssDataV40::new();
+			let mut has_score: bool = false;
 			
 			if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v40 {
 				if !cvss_metrics.is_empty() {
+					has_score = true;
 					cvss_v4 = cvss_metrics[0].cvss_data.clone();
 				}
 			}
 			else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v31 {
 				if !cvss_metrics.is_empty() {
+					has_score = true;
 					let Some(cvss_v31) = cvss_metrics.get(0) else { continue; };
 					cvss_v4.attack_vector = if cvss_v31.cvss_data.attack_vector == "ADJACENT_NETWORK" { "ADJACENT".to_string() } else { cvss_v31.cvss_data.attack_vector.clone() };
 					cvss_v4.attack_complexity = cvss_v31.cvss_data.attack_complexity.clone();
@@ -436,6 +440,7 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 			}
 			else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v30 {
 				if !cvss_metrics.is_empty() {
+					has_score = true;
 					let Some(cvss_v30) = cvss_metrics.get(0) else { continue; };
 					cvss_v4.attack_vector = if cvss_v30.cvss_data.attack_vector == "ADJACENT_NETWORK" { "ADJACENT".to_string() } else { cvss_v30.cvss_data.attack_vector.clone() };
 					cvss_v4.attack_complexity = cvss_v30.cvss_data.attack_complexity.clone();
@@ -461,6 +466,7 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 			}
 			else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v2 {
 				if !cvss_metrics.is_empty() {
+					has_score = true;
 					let Some(cvss_v2) = cvss_metrics.get(0) else { continue; };
 					cvss_v4.attack_vector = match cvss_v2.cvss_data.access_vector.as_str() {
 						"NETWORK" => "NETWORK".to_string(),
@@ -564,7 +570,8 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 				cvss_v4.recovery,
 				cvss_v4.value_density,
 				cvss_v4.vulnerability_response_effort,
-				cvss_v4.provider_urgency],
+				cvss_v4.provider_urgency,
+				has_score],
 			)?;
 			let mut inserted: Vec<i32> = Vec::new();
 			if let Some(weaknesses) = &cve.weaknesses {
