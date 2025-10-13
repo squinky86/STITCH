@@ -183,7 +183,7 @@ Recovery TEXT,
 valueDensity TEXT,
 vulnerabilityResponseEffort TEXT,
 providerUrgency TEXT,
-hasScore BOOLEAN NOT NULL DEFAULT 0 CHECK(hasScore IN (0, 1))
+scoreVersion INTEGER NOT NULL DEFAULT 0 CHECK(scoreVersion IN (0, 2, 3, 4))
 );",
 		[],
 	)
