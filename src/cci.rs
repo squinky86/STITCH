@@ -1,4 +1,4 @@
-use crate::common::{download_file,extract_from_zip,Args};
+use crate::common::{download_file,extract_from_zip,p,Args};
 
 use anyhow::{Context, Result};
 use quick_xml::events::Event;
@@ -14,21 +14,20 @@ pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
 	let mut cci_temp_xml = NamedTempFile::new()?;
     download_file("https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/CCI+List.zip", &mut cci_temp_zip, false, "Downloading CCI XML file from DISA…".to_string(), "✓".to_string(), &args).await?;
 
-    print!("Extracting CCI XML file…");
+    p("Extracting CCI XML file…", false);
     extract_from_zip(&cci_temp_zip, &mut cci_temp_xml, ".xml", &args)?;
-    println!("✓");
+    p("✓", true);
 
     // Parse CCI XML and populate database
-	print!("Parsing DISA CCI XML and populating database…");
+	p("Parsing DISA CCI XML and populating database…", false);
 	cci_parse_and_populate_database(&mut cci_temp_xml, &conn).await?;
-	println!("✓");
+	p("✓", true);
 
     Ok(())
 }
 
 fn extract_control_identifier(input: &str) -> Option<String> {
     // Regex to match the base control and optional single parenthetical enhancement
-    // NOTE: This captures (03) as (03). See further notes for (3)
     let re = Regex::new(r"^([A-Z]{2,3}-\d{1,2}(?:\(\d{1,2}\))?)").unwrap();
     
     // Find the match
@@ -37,15 +36,13 @@ fn extract_control_identifier(input: &str) -> Option<String> {
     // Extract the content of the first capturing group (index 1)
     let control_part = captures.get(1)?.as_str().to_string();
 
-    // --- Optional: Post-Processing to remove leading zero if (0N) is present ---
     if let Some(captures) = Regex::new(r"\(0(\d)\)$").unwrap().captures(&control_part) {
         // If it matches (0N), replace the end of the string with (N)
         let digit = captures.get(1).unwrap().as_str();
         let stripped_control = control_part.strip_suffix(&captures.get(0).unwrap().as_str()).unwrap();
         return Some(format!("{}({})", stripped_control, digit));
     }
-    // --------------------------------------------------------------------------
-
+    
     Some(control_part)
 }
 

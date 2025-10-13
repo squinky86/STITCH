@@ -1,8 +1,10 @@
+use crate::common::p;
+
 use rusqlite::Connection;
 use anyhow::{Context, Result};
 
 pub fn create_database(db_path: &str) -> Result<Connection> {
-    print!("Creating SQLite database…");
+    p("Creating SQLite database…", false);
     
 	// Delete the database file if it exists
 	if std::path::Path::new(db_path).exists() {
@@ -198,26 +200,26 @@ FOREIGN KEY(WeaknessId) REFERENCES Weakness(id)
 	)
 	.context("Failed to create MapNVDWeakness table")?;
 
-    println!("✓ ({})", db_path);
+    p(format!("✓ ({})", db_path).to_string().as_ref(), true);
 
 	Ok(conn)
 }
 
 pub fn display_database_summary(conn: &Connection) -> Result<()> {
-	println!("\n=== Database Summary ===");
+	p("\n=== Database Summary ===", true);
 
 	// Count entries
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM Weakness")?;
 	let entry_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	println!("CWE Entries: {}", entry_count);
+	p(format!("CWE Entries: {}", entry_count).to_string().as_ref(), true);
 
 	// Count relationships
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM WeaknessRelationship")?;
 	let rel_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	println!("Relationships: {}", rel_count);
+	p(format!("Relationships: {}", rel_count).to_string().as_ref(), true);
 
 	if rel_count > 0 {
-		println!("Relationship Types:");
+		p("Relationship Types:", true);
 		let mut stmt = conn.prepare(
 			"SELECT nature, COUNT(*) as count FROM WeaknessRelationship 
              GROUP BY nature ORDER BY count DESC",
@@ -227,48 +229,48 @@ pub fn display_database_summary(conn: &Connection) -> Result<()> {
 		})?;
 
 		while let Some(Ok((nature, count))) = rows.next() {
-			println!("\t{}: {}", nature, count);
+			p(format!("\t{}: {}", nature, count).to_string().as_ref(), true);;
 		}
 	}
 
 	// Count RMF Families
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFFamily")?;
 	let fam_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	println!("RMF Families: {}", fam_count);
+	p(format!("RMF Families: {}", fam_count).to_string().as_ref(), true);
 
 	// Count RMF Controls
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFControl")?;
 	let control_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	println!("RMF Controls: {}", control_count);
+	p(format!("RMF Controls: {}", control_count).to_string().as_ref(), true);
 
 	// Count RMF CCIs
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFCCI")?;
 	let cci_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	println!("RMF CCIs: {}", cci_count);
+	p(format!("RMF CCIs: {}", cci_count).to_string().as_ref(), true);
 
 	// Count STIGs
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM STIG")?;
 	let stig_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	println!("STIGs: {}", stig_count);
+	p(format!("STIGs: {}", stig_count).to_string().as_ref(), true);
 
 	// Count STIG Checks
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM STIGCheck")?;
 	let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	println!("STIG Checks: {}", check_count);
+	p(format!("STIG Checks: {}", check_count).to_string().as_ref(), true);
 
 	// Count STIG Checks
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM MapSTIGCheckCCI")?;
 	let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	println!("STIG Check to CCI Mappings: {}", check_count);
+	p(format!("STIG Check to CCI Mappings: {}", check_count).to_string().as_ref(), true);
 
 	// Count Mappings
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM STIGCheck WHERE CWEId IS NOT NULL")?;
     let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
-    println!("STIG→CWE Mappings: {}", check_count);
+    p(format!("STIG→CWE Mappings: {}", check_count).to_string().as_ref(), true);
 
     let mut stmt = conn.prepare("SELECT COUNT(*) FROM Weakness WHERE STIGCheckId IS NOT NULL")?;
     let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
-    println!("CWE→STIG Mappings: {}", check_count);
+    p(format!("CWE→STIG Mappings: {}", check_count).to_string().as_ref(), true);
 
 	Ok(())
 }

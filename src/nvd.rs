@@ -1,4 +1,4 @@
-use crate::common::{download_file,decompress_gzip,Args};
+use crate::common::{download_file,decompress_gzip,p,Args};
 
 use anyhow::{Context, Result};
 use chrono::{Utc, Datelike};
@@ -269,18 +269,18 @@ pub struct Reference {
 pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
 	// NVD Data
 	// Download and process NVD data
-	println!("Obtaining and parsing NVD data:");
+	p("Obtaining and parsing NVD data:", true);
 	let current_datetime = Utc::now();
 	for year in 2002..=current_datetime.year() {
-		println!("\tProcessing NVD data for year {}:", year);
+		p(format!("\tProcessing NVD data for year {}:", year).to_string().as_ref(), true);
 		let mut nvd_temp_json_gz = NamedTempFile::new()?;
 		let mut nvd_temp_json = NamedTempFile::new()?;
 		let nvd_url = format!("https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-{}.json.gz", year);
 		download_file(&nvd_url, &mut nvd_temp_json_gz, false, format!("\t\tDownloading {} NVD JSON…", year), "✓".to_string(), &args).await?;
 		
-		print!("\t\tDeflating {} NVD JSON…", year);
+		p(format!("\t\tDeflating {} NVD JSON…", year).to_string().as_ref(), false);
 		decompress_gzip(&mut nvd_temp_json_gz, &mut nvd_temp_json).await?;
-		println!("✓");
+		p("✓", true);
 
 		nvd_parse_and_populate_database(&mut nvd_temp_json, year, &conn).await?;
 	}
@@ -397,12 +397,52 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 			}
 			else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v31 {
 				if !cvss_metrics.is_empty() {
-					//convert v3.1 to v4.0
+					let Some(cvss_v31) = cvss_metrics.get(0) else { continue; };
+					cvss_v4.attack_vector = if cvss_v31.cvss_data.attack_vector == "ADJACENT_NETWORK" { "ADJACENT".to_string() } else { cvss_v31.cvss_data.attack_vector.clone() };
+					cvss_v4.attack_complexity = cvss_v31.cvss_data.attack_complexity.clone();
+					cvss_v4.privileges_required = cvss_v31.cvss_data.privileges_required.clone();
+					cvss_v4.user_interaction = if cvss_v31.cvss_data.user_interaction == "REQUIRED" { "ACTIVE".to_string() } else { cvss_v31.cvss_data.user_interaction.clone() };
+					
+					//The Scope metric reflects on the subsequent system's vulnerability
+					if cvss_v31.cvss_data.scope == "CHANGED" {
+						cvss_v4.sub_confidentiality_impact = cvss_v31.cvss_data.confidentiality_impact.clone();
+						cvss_v4.sub_integrity_impact = cvss_v31.cvss_data.integrity_impact.clone();
+						cvss_v4.sub_availability_impact = cvss_v31.cvss_data.availability_impact.clone();
+					}
+					else {
+						cvss_v4.sub_confidentiality_impact = "NONE".to_string();
+						cvss_v4.sub_integrity_impact = "NONE".to_string();
+						cvss_v4.sub_availability_impact = "NONE".to_string();
+					}
+					
+					cvss_v4.vuln_confidentiality_impact = cvss_v31.cvss_data.confidentiality_impact.clone();
+					cvss_v4.vuln_integrity_impact = cvss_v31.cvss_data.integrity_impact.clone();
+					cvss_v4.vuln_availability_impact = cvss_v31.cvss_data.availability_impact.clone();
 				}
 			}
 			else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v30 {
 				if !cvss_metrics.is_empty() {
-					//convert v3.0 to v4.0
+					let Some(cvss_v30) = cvss_metrics.get(0) else { continue; };
+					cvss_v4.attack_vector = if cvss_v30.cvss_data.attack_vector == "ADJACENT_NETWORK" { "ADJACENT".to_string() } else { cvss_v30.cvss_data.attack_vector.clone() };
+					cvss_v4.attack_complexity = cvss_v30.cvss_data.attack_complexity.clone();
+					cvss_v4.privileges_required = cvss_v30.cvss_data.privileges_required.clone();
+					cvss_v4.user_interaction = if cvss_v30.cvss_data.user_interaction == "REQUIRED" { "ACTIVE".to_string() } else { cvss_v30.cvss_data.user_interaction.clone() };
+					
+					//The Scope metric reflects on the subsequent system's vulnerability
+					if cvss_v30.cvss_data.scope == "CHANGED" {
+						cvss_v4.sub_confidentiality_impact = cvss_v30.cvss_data.confidentiality_impact.clone();
+						cvss_v4.sub_integrity_impact = cvss_v30.cvss_data.integrity_impact.clone();
+						cvss_v4.sub_availability_impact = cvss_v30.cvss_data.availability_impact.clone();
+					}
+					else {
+						cvss_v4.sub_confidentiality_impact = "NONE".to_string();
+						cvss_v4.sub_integrity_impact = "NONE".to_string();
+						cvss_v4.sub_availability_impact = "NONE".to_string();
+					}
+					
+					cvss_v4.vuln_confidentiality_impact = cvss_v30.cvss_data.confidentiality_impact.clone();
+					cvss_v4.vuln_integrity_impact = cvss_v30.cvss_data.integrity_impact.clone();
+					cvss_v4.vuln_availability_impact = cvss_v30.cvss_data.availability_impact.clone();
 				}
 			}
 			else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v2 {

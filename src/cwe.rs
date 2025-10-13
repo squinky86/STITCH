@@ -1,4 +1,4 @@
-use crate::common::{download_file,extract_from_zip,Args};
+use crate::common::{download_file,extract_from_zip,p,Args};
 
 use tempfile::NamedTempFile;
 use anyhow::{Context, Result};
@@ -35,9 +35,9 @@ pub async fn process_cwe(conn: &Connection, args: &Args) -> Result<()> {
     let mut cwe_temp_xml = NamedTempFile::new()?;
     download_file("https://cwe.mitre.org/data/xml/cwec_latest.xml.zip", &mut cwe_temp_zip, false, "Downloading CWE XML file from MITRE…".to_string(), "✓".to_string(), &args).await?;
 
-    print!("Extracting CWE XML file…");
+    p("Extracting CWE XML file…", false);
     extract_from_zip(&cwe_temp_zip, &mut cwe_temp_xml, ".xml", &args)?;
-    println!("✓");
+    p("✓", true);
 
     // Parse and populate database
     cwe_parse_and_populate_database(&mut cwe_temp_xml, conn, args).await?;
@@ -147,7 +147,7 @@ async fn cwe_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 					"Weakness" | "Category" | "View" => {
 						if let Some(weakness) = current_weakness.take() {
 							if args.verbose {
-								println!("Parsed: CWE-{}", weakness.id);
+								p(format!("Parsed: CWE-{}", weakness.id).as_str(), true);
 							}
 							cwe_entries.push(weakness);
 						}

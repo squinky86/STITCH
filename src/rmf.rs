@@ -1,4 +1,4 @@
-use crate::common::{download_file,Args};
+use crate::common::{download_file,p,Args};
 
 use anyhow::{Context, Result};
 use quick_xml::events::Event;
@@ -31,7 +31,7 @@ pub async fn process_rmf(conn: &Connection, args: &Args) -> Result<()> {
     download_file("https://csrc.nist.gov/CSRC/media/Projects/risk-management/800-53%20Downloads/800-53r5/SP_800-53_v5_1_XML.xml", &mut rmf_temp_xml, false, "Downloading RMF XML file from NIST…".to_string(), "✓".to_string(), &args).await?;
 
     // Parse RMF XML and populate database
-	println!("Parsing NIST RMF XML and populating database:");
+	p("Parsing NIST RMF XML and populating database:", true);
 	rmf_parse_and_populate_database(&mut rmf_temp_xml, &conn).await?;
 
     Ok(())

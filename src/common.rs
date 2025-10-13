@@ -5,7 +5,7 @@ use tempfile::NamedTempFile;
 use anyhow::{Context, Result};
 use clap::Parser;
 use futures_util::{StreamExt};
-use std::io::{Write};
+use std::io::{self,Write};
 use indicatif::{ProgressBar,ProgressStyle};
 
 #[derive(Parser, Debug)]
@@ -37,7 +37,7 @@ pub async fn download_file(url: &str, file: &mut NamedTempFile, silent: bool, pr
 	let client = Client::new();
 
     if args.verbose {
-        println!("\nConnecting to: {}", url);
+        p(format!("Connecting to: {}", url).as_str(), true);
     }
 
     let response = client
@@ -48,7 +48,7 @@ pub async fn download_file(url: &str, file: &mut NamedTempFile, silent: bool, pr
 
     let total_size = response.content_length().unwrap_or(0);
     if args.verbose && total_size > 0 {
-        println!("File size: {} bytes", total_size);
+        p(format!("File size: {} bytes", total_size).as_str(), true);
     }
 
 	if !silent {
@@ -90,7 +90,7 @@ pub fn extract_from_zip(zip_file: &NamedTempFile, xml_file: &mut NamedTempFile, 
     let mut archive = ZipArchive::new(file).context("Failed to read zip archive")?;
 
     if args.verbose {
-        println!("\nExtracting zip file...");
+        p("\nExtracting zip file…", false);
     }
 
     for i in 0..archive.len() {
@@ -112,4 +112,13 @@ pub fn extract_from_zip(zip_file: &NamedTempFile, xml_file: &mut NamedTempFile, 
     }
 
     Ok(())
+}
+
+pub fn p(s: &str, newline: bool) {
+	if newline {
+		println!("{}", s);
+	} else {
+		print!("{}", s);
+		io::stdout().flush().unwrap();	
+	}
 }

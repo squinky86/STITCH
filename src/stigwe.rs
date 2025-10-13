@@ -1,4 +1,4 @@
-use crate::common::{download_file,Args};
+use crate::common::{download_file,p,Args};
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
@@ -36,7 +36,7 @@ pub async fn process_stigwe(conn: &Connection, args: &Args) -> Result<()> {
 	download_file("https://raw.githubusercontent.com/squinky86/STIGWE/refs/heads/main/mappings/mappings.yaml", &mut stigwe_temp_yaml, false, "Downloading STIGWE YAML file…".to_string(), "✓".to_string(), &args).await?;
 
     // Parse STIGWE YAML and populate database
-	println!("Parsing STIGWE YAML and populating database:");
+	p("Parsing STIGWE YAML and populating database:", true);
 	stigwe_parse_and_populate_database(&mut stigwe_temp_yaml, &conn).await?;
 
     Ok(())
@@ -50,7 +50,7 @@ async fn stigwe_parse_and_populate_database(yaml: &mut NamedTempFile, conn: &Con
     let mappings: Mappings = serde_yaml::from_str(&yaml_content)
         .context("Failed to parse YAML content")?;
 
-	print!("\tInserting {} STIG→CWE mappings…", mappings.stig_to_cwe.len());
+	p(format!("\tInserting {} STIG→CWE mappings…", mappings.stig_to_cwe.len()).to_string().as_ref(), false);
     // Update STIGCheck CWEId where default mapping exists
     for (stig_id, mapping) in mappings.stig_to_cwe.iter() {
         for cwe_mapping in mapping.cwe_ids.iter() {
@@ -69,9 +69,9 @@ async fn stigwe_parse_and_populate_database(yaml: &mut NamedTempFile, conn: &Con
             }
         }
     }
-	println!("✓");
+	p("✓", true);
 
-	print!("\tInserting {} CWE→STIG mappings…", mappings.cwe_to_stig.len());
+	p(format!("\tInserting {} CWE→STIG mappings…", mappings.cwe_to_stig.len()).to_string().as_ref(), false);
     // Process CWE to STIG mappings
     for (cwe_id, mapping) in mappings.cwe_to_stig.iter() {
         for stig_mapping in mapping.stig_ids.iter() {
@@ -94,7 +94,7 @@ async fn stigwe_parse_and_populate_database(yaml: &mut NamedTempFile, conn: &Con
             }
         }
     }
-	println!("✓");
+	p("✓", true);
 
     Ok(())
 }
