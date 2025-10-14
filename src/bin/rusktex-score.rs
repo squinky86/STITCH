@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use cvss::v3::Base;
 use cvss::v4::Vector;
-use rusqlite::{params, Connection};
+use rusqlite::{fallible_streaming_iterator::FallibleStreamingIterator, params, Connection};
 use std::str::FromStr;
 
 /// A tool to calculate CVSS scores from a vector string or a CVE identifier.
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
     } else if input.starts_with("CVE-") {
         score_from_cve(&input, &args.db)?;
     } else if input.starts_with("CWE-") {
-		score_from_cwe(input, &args.db)
+		score_from_cwe(&input, &args.db)?;
 	} else {
         anyhow::bail!("Input must be a valid CVSS vector string (starting with 'CVSS:') or a CVE identifier (starting with 'CVE-') or a CWE (starting with 'CWE-').");
     }
@@ -184,12 +184,14 @@ fn score_from_cve(cve_id: &str, db_path: &str) -> Result<()> {
 
 /// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
 fn score_from_cwe(cwe_id: &str, db_path: &str) -> Result<()> {
-    let conn = Connection::open(db_path)
+
+	let cwe_num_id: u32 = cwe_id.to_uppercase().trim_start_matches("CWE-").parse()?;
+	let conn = Connection::open(db_path)
         .with_context(|| format!("Failed to open database file: {}", db_path))?;
 
     let mut stmt = conn.prepare(
         "SELECT
-			name
+			name,
             category,
 			view
         FROM Weakness
@@ -197,13 +199,33 @@ fn score_from_cwe(cwe_id: &str, db_path: &str) -> Result<()> {
     )?;
 
     // Query the database for the CVE's metrics
-    let cwe_data = stmt.query_row(params![cwe_id.to_uppercase()], |row| {
+    let cwe_data = stmt.query_row(params![cwe_num_id], |row| {
         Ok((
             row.get::<_, String>(0)?, //name
 			row.get::<_, bool>(1)?, //category
 			row.get::<_, bool>(2)?, //view
         ))
     }).with_context(|| format!("Could not find CWE '{}' in the database.", cwe_id))?;
+
+	println!("Found CWE: {} {}", cwe_id, cwe_data.0);
+
+	if cwe_data.1 {
+		println!("Categories cannot be scored.");
+		return Ok(());
+	}
+
+	if cwe_data.2 {
+		println!("Views cannot be scored.");
+		return Ok(());
+	}
+
+	// PROCESS 1: Direct NVD Scores
+	// Find direct instances of this CWE in the Vulnerability table
+	let mut stmt = conn.prepare(
+		"SELECT * FROM Vulnerability WHERE id IN (SELECT VulnerabilityId FROM MapVulnerabilityWeakness WHERE WeaknessId = ?1) AND scoreVersion >= 4",
+	)?;
+	let mut rows = stmt.query(params![cwe_num_id])?;
+	println!("Found {} CVEs.", rows.count().unwrap());
 
     /*
 	// Map the database's full metric names to their CVSS 4.0 single-letter abbreviations

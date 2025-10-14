@@ -1,7 +1,6 @@
 {
     "version": "2.0.0",
     "configurations": [
-        
         {
             "name": "Debug executable 'rusktex'",
             "type": "lldb",
@@ -13,6 +12,18 @@
                 ]
             },
             "args": []
+        },
+		{
+            "name": "Debug executable 'rusktex-score'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "run",
+                    "--bin=rusktex-score"
+                ]
+            },
+            "args": ["CWE-119"]
         },
         {
             "name": "Debug unit tests in executable 'rusktex'",
