@@ -61,10 +61,33 @@ fn score_from_cve(cve_id: &str, db_path: &str) -> Result<()> {
 
     let mut stmt = conn.prepare(
         "SELECT
-            attackVector, attackComplexity, attackRequirements, privilegesRequired,
-            userInteraction, vulnConfidentialityImpact, vulnIntegrityImpact,
-            vulnAvailabilityImpact, subConfidentialityImpact, subIntegrityImpact,
-            subAvailabilityImpact, scoreVersion
+            attackVector,
+			attackComplexity,
+			attackRequirements,
+			privilegesRequired,
+            userInteraction,
+			vulnConfidentialityImpact,
+			vulnIntegrityImpact,
+            vulnAvailabilityImpact,
+			subConfidentialityImpact,
+			subIntegrityImpact,
+            subAvailabilityImpact,
+			exploitMaturity,
+			confidentialityRequirement,
+			integrityRequirement,
+			availabilityRequirement,
+			modifiedAttackVector,
+			modifiedAttackComplexity,
+			modifiedAttackRequirements,
+			modifiedPrivilegesRequired,
+			modifiedUserInteraction,
+			modifiedVulnConfidentialityImpact,
+			modifiedVulnIntegrityImpact,
+			modifiedVulnAvailabilityImpact,
+			modifiedSubConfidentialityImpact,
+			modifiedSubIntegrityImpact,
+			modifiedSubAvailabilityImpact,
+			scoreVersion
          FROM Vulnerability
          WHERE NVDId = ?1",
     )?;
@@ -72,23 +95,68 @@ fn score_from_cve(cve_id: &str, db_path: &str) -> Result<()> {
     // Query the database for the CVE's metrics
     let cve_data = stmt.query_row(params![cve_id.to_uppercase()], |row| {
         Ok((
-            row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, String>(5)?,
-            row.get::<_, String>(6)?, row.get::<_, String>(7)?, row.get::<_, String>(8)?,
-            row.get::<_, String>(9)?, row.get::<_, String>(10)?, row.get::<_, u32>(11)?,
+            row.get::<_, String>(0)?, //AV
+			row.get::<_, String>(1)?, //AC
+			row.get::<_, String>(2)?, //AT
+            row.get::<_, String>(3)?, //PR
+			row.get::<_, String>(4)?, //UI
+			row.get::<_, String>(5)?, //VC
+            row.get::<_, String>(6)?, //VI
+			row.get::<_, String>(7)?, //VA
+			row.get::<_, String>(8)?, //SC
+            row.get::<_, String>(9)?, //SI
+			row.get::<_, String>(10)?, //SA
+			row.get::<_, String>(11)?, //E
+			row.get::<_, String>(12)?, //CR
+			row.get::<_, String>(13)?, //IR
+			row.get::<_, String>(14)?, //AR
+			row.get::<_, String>(15)?, // MAV
+			row.get::<_, String>(16)?, // MAC
+			row.get::<_, String>(17)?, // MAT
+			row.get::<_, String>(18)?, // MPR
+			row.get::<_, String>(19)?, // MUI
+			row.get::<_, String>(20)?, // MVC
+			row.get::<_, String>(21)?, // MVI
+			row.get::<_, String>(22)?, // MVA
+			row.get::<_, String>(23)?, // MSC
+			row.get::<_, String>(24)?, // MSI
+			row.get::<_, String>(25)?, // MSA
+			row.get::<_, u32>(26)?,
         ))
     }).with_context(|| format!("Could not find CVE '{}' in the database.", cve_id))?;
 
     // Map the database's full metric names to their CVSS 4.0 single-letter abbreviations
     let vector_string = format!(
-        "CVSS:4.0/AV:{}/AC:{}/AT:{}/PR:{}/UI:{}/VC:{}/VI:{}/VA:{}/SC:{}/SI:{}/SA:{}",
-        map_metric(&cve_data.0)?, map_metric(&cve_data.1)?, map_metric(&cve_data.2)?,
-        map_metric(&cve_data.3)?, map_metric(&cve_data.4)?, map_metric(&cve_data.5)?,
-        map_metric(&cve_data.6)?, map_metric(&cve_data.7)?, map_metric(&cve_data.8)?,
-        map_metric(&cve_data.9)?, map_metric(&cve_data.10)?
+        "CVSS:4.0/AV:{}/AC:{}/AT:{}/PR:{}/UI:{}/VC:{}/VI:{}/VA:{}/SC:{}/SI:{}/SA:{}/E:{}/CR:{}/IR:{}/AR:{}/MAV:{}/MAC:{}/MAT:{}/MPR:{}/MUI:{}/MVC:{}/MVI:{}/MVA:{}/MSC:{}/MSI:{}/MSA:{}",
+        map_metric(&cve_data.0)?,
+		map_metric(&cve_data.1)?,
+		map_metric(&cve_data.2)?,
+        map_metric(&cve_data.3)?,
+		map_metric(&cve_data.4)?,
+		map_metric(&cve_data.5)?,
+        map_metric(&cve_data.6)?,
+		map_metric(&cve_data.7)?,
+		map_metric(&cve_data.8)?,
+        map_metric(&cve_data.9)?,
+		map_metric(&cve_data.10)?,
+		map_metric(&cve_data.11)?,
+		map_metric(&cve_data.12)?,
+		map_metric(&cve_data.13)?,
+		map_metric(&cve_data.14)?,
+		map_metric(&cve_data.15)?,
+		map_metric(&cve_data.16)?,
+		map_metric(&cve_data.17)?,
+		map_metric(&cve_data.18)?,
+		map_metric(&cve_data.19)?,
+		map_metric(&cve_data.20)?,
+		map_metric(&cve_data.21)?,
+		map_metric(&cve_data.22)?,
+		map_metric(&cve_data.23)?,
+		map_metric(&cve_data.24)?,
+		map_metric(&cve_data.25)?
     );
 
-    println!("Found CVE: {} using CVSS Version {}. Constructing CVSS 4.0 vector from database: {}.", cve_id, cve_data.11, vector_string);
+    println!("Found CVE: {} using CVSS Version {}. Constructing CVSS 4.0 vector from database: {}.", cve_id, cve_data.26, vector_string);
     score_from_vector(&vector_string)?;
 
     Ok(())
@@ -102,15 +170,36 @@ fn map_metric(metric: &str) -> Result<&'static str> {
         "ADJACENT" => Ok("A"),
         "LOCAL" => Ok("L"),
         "PHYSICAL" => Ok("P"),
+
         // Attack Complexity (AC) & Privileges Required (PR) & Impacts (VC, VI, etc.)
         "HIGH" => Ok("H"),
         "LOW" => Ok("L"),
-        // Attack Requirements (AT)
+        
+		// Attack Requirements (AT)
         "PRESENT" => Ok("P"),
-        // User Interaction (UI)
+		"NONE" => Ok("N"),
+		
+		// Privileges Required (PR):
+		//     High handled in AC
+		//     LOW handled in AC
+		//     NONE handled in AT
+
+		// User Interaction (UI)
         "ACTIVE" => Ok("A"),
-        // Universal "None" value for multiple metric types
-        "NONE" => Ok("N"),
+		"PASSIVE" => Ok("P"),
+		//    NONE handled in AT
+
+		// Vulnerable System Confidentiality, Integrity, and Availability
+		//     High handled in AC
+		//     LOW handled in AC
+		//     NONE handled in AT
+
+		// Exploit Maturity (E)
+		"NOT_DEFINED" => Ok("X"),
+		"ATTACKED" => Ok("A"),
+		"PROOF_OF_CONCEPT" => Ok("P"),
+		"UNREPORTED" => Ok("U"),
+
         _ => Err(anyhow::anyhow!("Unknown CVSS metric value: {}", metric)),
     }
 }
