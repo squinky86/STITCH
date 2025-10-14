@@ -87,6 +87,12 @@ fn score_from_cve(cve_id: &str, db_path: &str) -> Result<()> {
 			modifiedSubConfidentialityImpact,
 			modifiedSubIntegrityImpact,
 			modifiedSubAvailabilityImpact,
+			Safety,
+			Automatable,
+			providerUrgency,
+			Recovery,
+			valueDensity,
+			vulnerabilityResponseEffort,
 			scoreVersion
          FROM Vulnerability
          WHERE NVDId = ?1",
@@ -121,13 +127,19 @@ fn score_from_cve(cve_id: &str, db_path: &str) -> Result<()> {
 			row.get::<_, String>(23)?, // MSC
 			row.get::<_, String>(24)?, // MSI
 			row.get::<_, String>(25)?, // MSA
-			row.get::<_, u32>(26)?,
+			row.get::<_, String>(26)?, // S
+			row.get::<_, String>(27)?, // AU
+			row.get::<_, String>(28)?, // U
+			row.get::<_, String>(29)?, // R
+			row.get::<_, String>(30)?, // V
+			row.get::<_, String>(31)?, // RE
+			row.get::<_, u32>(32)?,
         ))
     }).with_context(|| format!("Could not find CVE '{}' in the database.", cve_id))?;
 
     // Map the database's full metric names to their CVSS 4.0 single-letter abbreviations
     let vector_string = format!(
-        "CVSS:4.0/AV:{}/AC:{}/AT:{}/PR:{}/UI:{}/VC:{}/VI:{}/VA:{}/SC:{}/SI:{}/SA:{}/E:{}/CR:{}/IR:{}/AR:{}/MAV:{}/MAC:{}/MAT:{}/MPR:{}/MUI:{}/MVC:{}/MVI:{}/MVA:{}/MSC:{}/MSI:{}/MSA:{}",
+        "CVSS:4.0/AV:{}/AC:{}/AT:{}/PR:{}/UI:{}/VC:{}/VI:{}/VA:{}/SC:{}/SI:{}/SA:{}/E:{}/CR:{}/IR:{}/AR:{}/MAV:{}/MAC:{}/MAT:{}/MPR:{}/MUI:{}/MVC:{}/MVI:{}/MVA:{}/MSC:{}/MSI:{}/MSA:{}/S:{}/AU:{}/U:{}/R:{}/V:{}/RE:{}",
         map_metric(&cve_data.0)?,
 		map_metric(&cve_data.1)?,
 		map_metric(&cve_data.2)?,
@@ -153,10 +165,16 @@ fn score_from_cve(cve_id: &str, db_path: &str) -> Result<()> {
 		map_metric(&cve_data.22)?,
 		map_metric(&cve_data.23)?,
 		map_metric(&cve_data.24)?,
-		map_metric(&cve_data.25)?
+		map_metric(&cve_data.25)?,
+		map_metric(&cve_data.26)?,
+		map_metric(&cve_data.27)?,
+		map_metric(&cve_data.28)?,
+		map_metric(&cve_data.29)?,
+		map_metric(&cve_data.30)?,
+		map_metric(&cve_data.31)?
     );
 
-    println!("Found CVE: {} using CVSS Version {}. Constructing CVSS 4.0 vector from database: {}.", cve_id, cve_data.26, vector_string);
+    println!("Found CVE: {} using CVSS Version {}. Constructing CVSS 4.0 vector from database: {}.", cve_id, cve_data.32, vector_string);
     score_from_vector(&vector_string)?;
 
     Ok(())
@@ -199,6 +217,40 @@ fn map_metric(metric: &str) -> Result<&'static str> {
 		"ATTACKED" => Ok("A"),
 		"PROOF_OF_CONCEPT" => Ok("P"),
 		"UNREPORTED" => Ok("U"),
+
+		// Safety (S)
+		//     NOT_DEFINED handled in E
+		"NEGLIGIBLE" => Ok("N"),
+		//     PRESENT handled in AT
+
+		// Automatable (AU)
+		//     NOT_DEFINED handled in E
+		"YES" => Ok("Y"),
+		"NO" => Ok("N"),
+
+		// Provider Urgency (U)
+		//     NOT_DEFINED handled in E
+		"RED" => Ok("RED"),
+		"AMBER" => Ok("AMBER"),
+		"GREEN" => Ok("GREEN"),
+		"CLEAR" => Ok("CLEAR"),
+
+		// Recovery (R)
+		//     NOT_DEFINED handled in E
+		"AUTOMATIC" => Ok("A"),
+		"USER" => Ok("U"),
+		"IRRECOVERABLE" => Ok("I"),
+
+		// Value Density (V)
+		//     NOT_DEFINED handled in E
+		"DIFFUSE" => Ok("D"),
+		"CONCENTRATED" => Ok("C"),
+
+		// Vulnerability Response Effort (RE)
+		//     NOT_DEFINED handled in E
+		//     LOW handled in AC
+		"MODERATE" => Ok("M"),
+		//     HIGH handled in AC
 
         _ => Err(anyhow::anyhow!("Unknown CVSS metric value: {}", metric)),
     }

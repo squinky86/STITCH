@@ -347,12 +347,12 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 				modifiedSubConfidentialityImpact,
 				modifiedSubIntegrityImpact,
 				modifiedSubAvailabilityImpact,
-				Safety,
-				Automatable,
-				Recovery,
+				safety,
+				automatable,
+				providerUrgency,
+				recovery,
 				valueDensity,
 				vulnerabilityResponseEffort,
-				providerUrgency,
 				scoreVersion
 			) VALUES (
 				?1,
@@ -567,10 +567,10 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 				cvss_v4.modified_sub_availability_impact,
 				cvss_v4.safety,
 				cvss_v4.automatable,
+				cvss_v4.provider_urgency,
 				cvss_v4.recovery,
 				cvss_v4.value_density,
 				cvss_v4.vulnerability_response_effort,
-				cvss_v4.provider_urgency,
 				score_version],
 			)?;
 			let vuln_id = tx.last_insert_rowid();
