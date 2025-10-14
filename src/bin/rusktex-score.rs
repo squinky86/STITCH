@@ -21,15 +21,17 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let input = args.input.trim();
+    let input = args.input.trim().to_uppercase();
 
     // Determine if the input is a vector string or a CVE identifier
     if input.starts_with("CVSS:") {
-        score_from_vector(input)?;
-    } else if input.to_uppercase().starts_with("CVE-") {
-        score_from_cve(&args.input, &args.db)?;
-    } else {
-        anyhow::bail!("Input must be a valid CVSS vector string (starting with 'CVSS:') or a CVE identifier (starting with 'CVE-').");
+        score_from_vector(&input)?;
+    } else if input.starts_with("CVE-") {
+        score_from_cve(&input, &args.db)?;
+    } else if input.starts_with("CWE-") {
+		score_from_cwe(input, &args.db)
+	} else {
+        anyhow::bail!("Input must be a valid CVSS vector string (starting with 'CVSS:') or a CVE identifier (starting with 'CVE-') or a CWE (starting with 'CWE-').");
     }
 
     Ok(())
@@ -94,8 +96,8 @@ fn score_from_cve(cve_id: &str, db_path: &str) -> Result<()> {
 			valueDensity,
 			vulnerabilityResponseEffort,
 			scoreVersion
-         FROM Vulnerability
-         WHERE NVDId = ?1",
+        FROM Vulnerability
+        WHERE NVDId = ?1",
     )?;
 
     // Query the database for the CVE's metrics
@@ -180,6 +182,73 @@ fn score_from_cve(cve_id: &str, db_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
+fn score_from_cwe(cwe_id: &str, db_path: &str) -> Result<()> {
+    let conn = Connection::open(db_path)
+        .with_context(|| format!("Failed to open database file: {}", db_path))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT
+			name
+            category,
+			view
+        FROM Weakness
+        WHERE id = ?1",
+    )?;
+
+    // Query the database for the CVE's metrics
+    let cwe_data = stmt.query_row(params![cwe_id.to_uppercase()], |row| {
+        Ok((
+            row.get::<_, String>(0)?, //name
+			row.get::<_, bool>(1)?, //category
+			row.get::<_, bool>(2)?, //view
+        ))
+    }).with_context(|| format!("Could not find CWE '{}' in the database.", cwe_id))?;
+
+    /*
+	// Map the database's full metric names to their CVSS 4.0 single-letter abbreviations
+    let vector_string = format!(
+        "CVSS:4.0/AV:{}/AC:{}/AT:{}/PR:{}/UI:{}/VC:{}/VI:{}/VA:{}/SC:{}/SI:{}/SA:{}/E:{}/CR:{}/IR:{}/AR:{}/MAV:{}/MAC:{}/MAT:{}/MPR:{}/MUI:{}/MVC:{}/MVI:{}/MVA:{}/MSC:{}/MSI:{}/MSA:{}/S:{}/AU:{}/U:{}/R:{}/V:{}/RE:{}",
+        map_metric(&cve_data.0)?,
+		map_metric(&cve_data.1)?,
+		map_metric(&cve_data.2)?,
+        map_metric(&cve_data.3)?,
+		map_metric(&cve_data.4)?,
+		map_metric(&cve_data.5)?,
+        map_metric(&cve_data.6)?,
+		map_metric(&cve_data.7)?,
+		map_metric(&cve_data.8)?,
+        map_metric(&cve_data.9)?,
+		map_metric(&cve_data.10)?,
+		map_metric(&cve_data.11)?,
+		map_metric(&cve_data.12)?,
+		map_metric(&cve_data.13)?,
+		map_metric(&cve_data.14)?,
+		map_metric(&cve_data.15)?,
+		map_metric(&cve_data.16)?,
+		map_metric(&cve_data.17)?,
+		map_metric(&cve_data.18)?,
+		map_metric(&cve_data.19)?,
+		map_metric(&cve_data.20)?,
+		map_metric(&cve_data.21)?,
+		map_metric(&cve_data.22)?,
+		map_metric(&cve_data.23)?,
+		map_metric(&cve_data.24)?,
+		map_metric(&cve_data.25)?,
+		map_metric(&cve_data.26)?,
+		map_metric(&cve_data.27)?,
+		map_metric(&cve_data.28)?,
+		map_metric(&cve_data.29)?,
+		map_metric(&cve_data.30)?,
+		map_metric(&cve_data.31)?
+    );
+
+    println!("Found CVE: {} using CVSS Version {}. Constructing CVSS 4.0 vector from database: {}.", cve_id, cve_data.32, vector_string);
+    score_from_vector(&vector_string)?;*/
+
+    Ok(())
+}
+
 /// Maps a CVSS metric's full name to its single-letter abbreviation.
 fn map_metric(metric: &str) -> Result<&'static str> {
     match metric {
@@ -251,6 +320,20 @@ fn map_metric(metric: &str) -> Result<&'static str> {
 		//     LOW handled in AC
 		"MODERATE" => Ok("M"),
 		//     HIGH handled in AC
+
+		// C, I, and A Requirements (CR, IR, AR)
+		//     NOT_DEFINED handled in E
+		//     LOW handled in AC
+		"MEDIUM" => Ok("M"),
+		//     HIGH handled in AC
+		
+
+		//Modified Subsequent System Integrity (MSI) and MS Availability (MSA)
+		//     NOT_DEFINED handled in E
+		//     LOW handled in AC
+		//     MEDIUM handled in CR, IR, and AR
+		//     HIGH handled in AC
+		"SAFETY" => Ok("S"),
 
         _ => Err(anyhow::anyhow!("Unknown CVSS metric value: {}", metric)),
     }
