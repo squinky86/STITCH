@@ -5,7 +5,82 @@ use clap::Parser;
 use cvss::v3::Base;
 use cvss::v4::Vector;
 use rusqlite::{params, Connection};
-use std::str::FromStr;
+use std::{str::FromStr, collections::HashMap};
+
+/// Calculates the mode (most frequent value) of a sequence of items.
+fn mode(iter: impl Iterator<Item = String>) -> String {
+    let mut frequencies = HashMap::new();
+    for item in iter {
+        *frequencies.entry(item).or_insert(0) += 1;
+    }
+    frequencies
+        .into_iter()
+        .max_by_key(|&(_, count)| count)
+        .map(|(val, _)| val)
+        .unwrap_or_else(|| String::from("N/A"))
+}
+
+/// Maps a CVSS metric's full name to its single-letter abbreviation.
+fn map_metric(metric: &str) -> Result<&'static str> {
+    match metric {
+        // Attack Vector (AV)
+        "NETWORK" => Ok("N"),
+        "ADJACENT" => Ok("A"),
+        "LOCAL" => Ok("L"),
+        "PHYSICAL" => Ok("P"),
+
+        // Attack Complexity (AC) & Privileges Required (PR) & Impacts (VC, VI, etc.)
+        "HIGH" => Ok("H"),
+        "LOW" => Ok("L"),
+        
+        // Attack Requirements (AT)
+        "PRESENT" => Ok("P"),
+        "NONE" => Ok("N"),
+        
+        // User Interaction (UI)
+        "ACTIVE" => Ok("A"),
+        "PASSIVE" => Ok("P"),
+
+        // Exploit Maturity (E)
+        "NOT_DEFINED" => Ok("X"),
+        "ATTACKED" => Ok("A"),
+        "PROOF_OF_CONCEPT" => Ok("P"),
+        "UNREPORTED" => Ok("U"),
+
+        // Safety (S)
+        "NEGLIGIBLE" => Ok("N"),
+
+        // Automatable (AU)
+        "YES" => Ok("Y"),
+        "NO" => Ok("N"),
+
+        // Provider Urgency (U)
+        "RED" => Ok("RED"),
+        "AMBER" => Ok("AMBER"),
+        "GREEN" => Ok("GREEN"),
+        "CLEAR" => Ok("CLEAR"),
+
+        // Recovery (R)
+        "AUTOMATIC" => Ok("A"),
+        "USER" => Ok("U"),
+        "IRRECOVERABLE" => Ok("I"),
+
+        // Value Density (V)
+        "DIFFUSE" => Ok("D"),
+        "CONCENTRATED" => Ok("C"),
+
+        // Vulnerability Response Effort (RE)
+        "MODERATE" => Ok("M"),
+
+        // C, I, and A Requirements (CR, IR, AR)
+        "MEDIUM" => Ok("M"),
+        
+        // Modified Subsequent System Impacts
+        "SAFETY" => Ok("S"),
+
+        _ => Err(anyhow::anyhow!("Unknown CVSS metric value: {}", metric)),
+    }
+}
 
 /// A tool to calculate CVSS scores from a vector string or a CVE identifier.
 #[derive(Parser, Debug)]
@@ -257,7 +332,7 @@ fn score_from_cwe(cwe_id: &str, db_path: &str) -> Result<()> {
 			vulnerabilityResponseEffort
 		FROM Vulnerability WHERE id IN (SELECT VulnerabilityId FROM MapVulnerabilityWeakness WHERE WeaknessId = ?2) AND scoreVersion = ?1",
 	)?;
-	let mut cve_ids: Vec<CvssDataV40> = stmt
+	let mut cves: Vec<CvssDataV40> = stmt
 		.query_map(params![4, cwe_num_id], |row| {
 			Ok(CvssDataV40 {
 				attack_vector: row.get(0)?,
@@ -300,9 +375,9 @@ fn score_from_cwe(cwe_id: &str, db_path: &str) -> Result<()> {
 		})?
 		.collect::<Result<Vec<CvssDataV40>, _>>()?;
 
-	println!("Found {} CVSS 4.0 CVEs.", cve_ids.len());
+	println!("Found {} CVSS 4.0 CVEs.", cves.len());
 
-	if cve_ids.len() < 5 {
+	if cves.len() < 5 {
 		println!("Not enough CVEs to generate a reliable score using CVSS 4.0. Checking for CVSS 3.1 CVEs.");
 		let tmp_cves: Vec<CvssDataV40> = stmt
 			.query_map(params![3, cwe_num_id], |row| {
@@ -347,10 +422,10 @@ fn score_from_cwe(cwe_id: &str, db_path: &str) -> Result<()> {
 		})?
 		.collect::<Result<Vec<CvssDataV40>, _>>()?;
 		println!("Found {} CVSS 3 and 3.1 CVEs.", tmp_cves.len());
-		cve_ids.extend(tmp_cves);
+		cves.extend(tmp_cves);
 	}
 
-	if cve_ids.len() < 5 {
+	if cves.len() < 5 {
 		println!("Not enough CVEs to generate a reliable score using CVSS 4.0, 3.1, and 3.0. Checking for CVSS 2.0 CVEs.");
 		let tmp_cves: Vec<CvssDataV40> = stmt
 			.query_map(params![2, cwe_num_id], |row| {
@@ -395,100 +470,124 @@ fn score_from_cwe(cwe_id: &str, db_path: &str) -> Result<()> {
 		})?
 		.collect::<Result<Vec<CvssDataV40>, _>>()?;
 		println!("Found {} CVSS 2.0 CVEs.", tmp_cves.len());
-		cve_ids.extend(tmp_cves);
+		cves.extend(tmp_cves);
 	}
 
-	println!("TODO: Score with the {} CVEs in memory.", cve_ids.len());
+	println!("Scoring with {} CVEs in memory.", cves.len());
+	
+	let temp_cvss4 = CvssDataV40 {
+		attack_vector: mode(cves.iter().map(|c| c.attack_vector.clone())),
+		attack_complexity: mode(cves.iter().map(|c| c.attack_complexity.clone())),
+		attack_requirements: mode(cves.iter().map(|c| c.attack_requirements.clone())),
+		privileges_required: mode(cves.iter().map(|c| c.privileges_required.clone())),
+		user_interaction: mode(cves.iter().map(|c| c.user_interaction.clone())),
+		vuln_confidentiality_impact: mode(cves.iter().map(|c| c.vuln_confidentiality_impact.clone())),
+		vuln_integrity_impact: mode(cves.iter().map(|c| c.vuln_integrity_impact.clone())),
+		vuln_availability_impact: mode(cves.iter().map(|c| c.vuln_availability_impact.clone())),
+		sub_confidentiality_impact: mode(cves.iter().map(|c| c.sub_confidentiality_impact.clone())),
+		sub_integrity_impact: mode(cves.iter().map(|c| c.sub_integrity_impact.clone())),
+		sub_availability_impact: mode(cves.iter().map(|c| c.sub_availability_impact.clone())),
+		exploit_maturity: mode(cves.iter().map(|c| c.exploit_maturity.clone())),
+		confidentiality_requirement: mode(cves.iter().map(|c| c.confidentiality_requirement.clone())),
+		integrity_requirement: mode(cves.iter().map(|c| c.integrity_requirement.clone())),
+		availability_requirement: mode(cves.iter().map(|c| c.availability_requirement.clone())),
+		modified_attack_vector: mode(cves.iter().map(|c| c.modified_attack_vector.clone())),
+		modified_attack_complexity: mode(cves.iter().map(|c| c.modified_attack_complexity.clone())),
+		modified_attack_requirements: mode(cves.iter().map(|c| c.modified_attack_requirements.clone())),
+		modified_privileges_required: mode(cves.iter().map(|c| c.modified_privileges_required.clone())),
+		modified_user_interaction: mode(cves.iter().map(|c| c.modified_user_interaction.clone())),
+		modified_vuln_confidentiality_impact: mode(cves.iter().map(|c| c.modified_vuln_confidentiality_impact.clone())),
+		modified_vuln_integrity_impact: mode(cves.iter().map(|c| c.modified_vuln_integrity_impact.clone())),
+		modified_vuln_availability_impact: mode(cves.iter().map(|c| c.modified_vuln_availability_impact.clone())),
+		modified_sub_confidentiality_impact: mode(cves.iter().map(|c| c.modified_sub_confidentiality_impact.clone())),
+		modified_sub_integrity_impact: mode(cves.iter().map(|c| c.modified_sub_integrity_impact.clone())),
+		modified_sub_availability_impact: mode(cves.iter().map(|c| c.modified_sub_availability_impact.clone())),
+		safety: mode(cves.iter().map(|c| c.safety.clone())),
+		automatable: mode(cves.iter().map(|c| c.automatable.clone())),
+		provider_urgency: mode(cves.iter().map(|c| c.provider_urgency.clone())),
+		recovery: mode(cves.iter().map(|c| c.recovery.clone())),
+		value_density: mode(cves.iter().map(|c| c.value_density.clone())),
+		vulnerability_response_effort: mode(cves.iter().map(|c| c.vulnerability_response_effort.clone())),
+		version: "4".to_string(),
+		base_score: 0.0,
+		base_severity: "".to_string(),
+		vector_string: "".to_string(),
+	};
+
+	println!("\nCVSS Vector Analysis (Mode):");
+	println!("  Attack Vector: {}", temp_cvss4.attack_vector);
+	println!("  Attack Complexity: {}", temp_cvss4.attack_complexity);
+	println!("  Attack Requirements: {}", temp_cvss4.attack_requirements);
+	println!("  Privileges Required: {}", temp_cvss4.privileges_required);
+	println!("  User Interaction: {}", temp_cvss4.user_interaction);
+	println!("  Vulnerable Confidentiality Impact: {}", temp_cvss4.vuln_confidentiality_impact);
+	println!("  Vulnerable Integrity Impact: {}", temp_cvss4.vuln_integrity_impact);
+	println!("  Vulnerable Availability Impact: {}", temp_cvss4.vuln_availability_impact);
+	println!("  Subsystem Confidentiality Impact: {}", temp_cvss4.sub_confidentiality_impact);
+	println!("  Subsystem Integrity Impact: {}", temp_cvss4.sub_integrity_impact);
+	println!("  Subsystem Availability Impact: {}", temp_cvss4.sub_availability_impact);
+	println!("  Exploit Maturity: {}", temp_cvss4.exploit_maturity);
+	println!("  Confidentiality Requirement: {}", temp_cvss4.confidentiality_requirement);
+	println!("  Integrity Requirement: {}", temp_cvss4.integrity_requirement);
+	println!("  Availability Requirement: {}", temp_cvss4.availability_requirement);
+	println!("  Modified Attack Vector: {}", temp_cvss4.modified_attack_vector);
+	println!("  Modified Attack Complexity: {}", temp_cvss4.modified_attack_complexity);
+	println!("  Modified Attack Requirements: {}", temp_cvss4.modified_attack_requirements);
+	println!("  Modified Privileges Required: {}", temp_cvss4.modified_privileges_required);
+	println!("  Modified User Interaction: {}", temp_cvss4.modified_user_interaction);
+	println!("  Modified Vulnerable Confidentiality Impact: {}", temp_cvss4.modified_vuln_confidentiality_impact);
+	println!("  Modified Vulnerable Integrity Impact: {}", temp_cvss4.modified_vuln_integrity_impact);
+	println!("  Modified Vulnerable Availability Impact: {}", temp_cvss4.modified_vuln_availability_impact);
+	println!("  Modified Subsystem Confidentiality Impact: {}", temp_cvss4.modified_sub_confidentiality_impact);
+	println!("  Modified Subsystem Integrity Impact: {}", temp_cvss4.modified_sub_integrity_impact);
+	println!("  Modified Subsystem Availability Impact: {}", temp_cvss4.modified_sub_availability_impact);
+	println!("  Safety: {}", temp_cvss4.safety);
+	println!("  Automatable: {}", temp_cvss4.automatable);
+	println!("  Provider Urgency: {}", temp_cvss4.provider_urgency);
+	println!("  Recovery: {}", temp_cvss4.recovery);
+	println!("  Value Density: {}", temp_cvss4.value_density);
+	println!("  Vulnerability Response Effort: {}", temp_cvss4.vulnerability_response_effort);
+
+	let vector_string = format!(
+        "CVSS:4.0/AV:{}/AC:{}/AT:{}/PR:{}/UI:{}/VC:{}/VI:{}/VA:{}/SC:{}/SI:{}/SA:{}/E:{}/CR:{}/IR:{}/AR:{}/MAV:{}/MAC:{}/MAT:{}/MPR:{}/MUI:{}/MVC:{}/MVI:{}/MVA:{}/MSC:{}/MSI:{}/MSA:{}/S:{}/AU:{}/U:{}/R:{}/V:{}/RE:{}",
+        map_metric(&temp_cvss4.attack_vector)?,
+		map_metric(&temp_cvss4.attack_complexity)?,
+		map_metric(&temp_cvss4.attack_requirements)?,
+		map_metric(&temp_cvss4.privileges_required)?,
+		map_metric(&temp_cvss4.user_interaction)?,
+		map_metric(&temp_cvss4.vuln_confidentiality_impact)?,
+		map_metric(&temp_cvss4.vuln_integrity_impact)?,
+		map_metric(&temp_cvss4.vuln_availability_impact)?,
+		map_metric(&temp_cvss4.sub_confidentiality_impact)?,
+		map_metric(&temp_cvss4.sub_integrity_impact)?,
+		map_metric(&temp_cvss4.sub_availability_impact)?,
+		map_metric(&temp_cvss4.exploit_maturity)?,
+		map_metric(&temp_cvss4.confidentiality_requirement)?,
+		map_metric(&temp_cvss4.integrity_requirement)?,
+		map_metric(&temp_cvss4.availability_requirement)?,
+		map_metric(&temp_cvss4.modified_attack_vector)?,
+		map_metric(&temp_cvss4.modified_attack_complexity)?,
+		map_metric(&temp_cvss4.modified_attack_requirements)?,
+		map_metric(&temp_cvss4.modified_privileges_required)?,
+		map_metric(&temp_cvss4.modified_user_interaction)?,
+		map_metric(&temp_cvss4.modified_vuln_confidentiality_impact)?,
+		map_metric(&temp_cvss4.modified_vuln_integrity_impact)?,
+		map_metric(&temp_cvss4.modified_vuln_availability_impact)?,
+		map_metric(&temp_cvss4.modified_sub_confidentiality_impact)?,
+		map_metric(&temp_cvss4.modified_sub_integrity_impact)?,
+		map_metric(&temp_cvss4.modified_sub_availability_impact)?,
+		map_metric(&temp_cvss4.safety)?,
+		map_metric(&temp_cvss4.automatable)?,
+		map_metric(&temp_cvss4.provider_urgency)?,
+		map_metric(&temp_cvss4.recovery)?,
+		map_metric(&temp_cvss4.value_density)?,
+		map_metric(&temp_cvss4.vulnerability_response_effort)?
+	);
+
+	score_from_vector(&vector_string)?;
 
     Ok(())
 }
 
-/// Maps a CVSS metric's full name to its single-letter abbreviation.
-fn map_metric(metric: &str) -> Result<&'static str> {
-    match metric {
-        // Attack Vector (AV)
-        "NETWORK" => Ok("N"),
-        "ADJACENT" => Ok("A"),
-        "LOCAL" => Ok("L"),
-        "PHYSICAL" => Ok("P"),
 
-        // Attack Complexity (AC) & Privileges Required (PR) & Impacts (VC, VI, etc.)
-        "HIGH" => Ok("H"),
-        "LOW" => Ok("L"),
-        
-		// Attack Requirements (AT)
-        "PRESENT" => Ok("P"),
-		"NONE" => Ok("N"),
-		
-		// Privileges Required (PR):
-		//     High handled in AC
-		//     LOW handled in AC
-		//     NONE handled in AT
 
-		// User Interaction (UI)
-        "ACTIVE" => Ok("A"),
-		"PASSIVE" => Ok("P"),
-		//    NONE handled in AT
-
-		// Vulnerable System Confidentiality, Integrity, and Availability
-		//     High handled in AC
-		//     LOW handled in AC
-		//     NONE handled in AT
-
-		// Exploit Maturity (E)
-		"NOT_DEFINED" => Ok("X"),
-		"ATTACKED" => Ok("A"),
-		"PROOF_OF_CONCEPT" => Ok("P"),
-		"UNREPORTED" => Ok("U"),
-
-		// Safety (S)
-		//     NOT_DEFINED handled in E
-		"NEGLIGIBLE" => Ok("N"),
-		//     PRESENT handled in AT
-
-		// Automatable (AU)
-		//     NOT_DEFINED handled in E
-		"YES" => Ok("Y"),
-		"NO" => Ok("N"),
-
-		// Provider Urgency (U)
-		//     NOT_DEFINED handled in E
-		"RED" => Ok("RED"),
-		"AMBER" => Ok("AMBER"),
-		"GREEN" => Ok("GREEN"),
-		"CLEAR" => Ok("CLEAR"),
-
-		// Recovery (R)
-		//     NOT_DEFINED handled in E
-		"AUTOMATIC" => Ok("A"),
-		"USER" => Ok("U"),
-		"IRRECOVERABLE" => Ok("I"),
-
-		// Value Density (V)
-		//     NOT_DEFINED handled in E
-		"DIFFUSE" => Ok("D"),
-		"CONCENTRATED" => Ok("C"),
-
-		// Vulnerability Response Effort (RE)
-		//     NOT_DEFINED handled in E
-		//     LOW handled in AC
-		"MODERATE" => Ok("M"),
-		//     HIGH handled in AC
-
-		// C, I, and A Requirements (CR, IR, AR)
-		//     NOT_DEFINED handled in E
-		//     LOW handled in AC
-		"MEDIUM" => Ok("M"),
-		//     HIGH handled in AC
-		
-
-		//Modified Subsequent System Integrity (MSI) and MS Availability (MSA)
-		//     NOT_DEFINED handled in E
-		//     LOW handled in AC
-		//     MEDIUM handled in CR, IR, and AR
-		//     HIGH handled in AC
-		"SAFETY" => Ok("S"),
-
-        _ => Err(anyhow::anyhow!("Unknown CVSS metric value: {}", metric)),
-    }
-}
