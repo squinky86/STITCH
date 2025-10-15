@@ -1,4 +1,4 @@
-use rusktex::nvd::CvssDataV40;
+use rusktex::{nvd::CvssDataV40};
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -105,6 +105,8 @@ fn main() -> Result<()> {
         score_from_cve(&input, &args.db)?;
     } else if input.starts_with("CWE-") {
 		score_from_cwe(&input, &args.db)?;
+	} else if input.starts_with("CWES") {
+		let _ = score_cwes(&args.db);
 	} else {
         anyhow::bail!("Input must be a valid CVSS vector string (starting with 'CVSS:') or a CVE identifier (starting with 'CVE-') or a CWE (starting with 'CWE-').");
     }
@@ -255,6 +257,48 @@ fn score_from_cve(cve_id: &str, db_path: &str) -> Result<()> {
     score_from_vector(&vector_string)?;
 
     Ok(())
+}
+
+fn score_cwes(db_path: &str) -> Result<()> {
+	let conn = Connection::open(db_path)
+        .with_context(|| format!("Failed to open database file: {}", db_path))?;
+
+	let mut stmt = conn.prepare(
+        "SELECT
+			id,
+			name,
+            category,
+			view
+        FROM Weakness",
+    )?;
+
+	let cwes = stmt.query_map([], |row| {
+		Ok((
+			row.get::<_, u32>(0)?, //id
+			row.get::<_, String>(1)?, //name
+			row.get::<_, bool>(2)?, //category
+			row.get::<_, bool>(3)?, //view
+		))
+	}).with_context(|| format!("Could not get CWEs from the database."))?;
+
+	for cwe in cwes {
+		let cwe = cwe?;
+		let cwe_id = format!("CWE-{}", cwe.0);
+		println!("\n=== Scoring {} {} ===", cwe_id, cwe.1);
+		if cwe.2 {
+			println!("Categories cannot be scored.");
+			continue;
+		}
+
+		if cwe.3 {
+			println!("Views cannot be scored.");
+			continue;
+		}
+
+		score_from_cwe(&cwe_id, db_path)?;
+	}
+
+	Ok(())
 }
 
 /// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
@@ -473,6 +517,11 @@ fn score_from_cwe(cwe_id: &str, db_path: &str) -> Result<()> {
 		cves.extend(tmp_cves);
 	}
 
+	if cves.len() < 5 {
+		println!("Unable to score with fewer than 5 CVEs.");
+		return Ok(());
+	}
+
 	println!("Scoring with {} CVEs in memory.", cves.len());
 	
 	let temp_cvss4 = CvssDataV40 {
@@ -583,6 +632,8 @@ fn score_from_cwe(cwe_id: &str, db_path: &str) -> Result<()> {
 		map_metric(&temp_cvss4.value_density)?,
 		map_metric(&temp_cvss4.vulnerability_response_effort)?
 	);
+
+	println!("Scoring VS: {}", vector_string);
 
 	score_from_vector(&vector_string)?;
 

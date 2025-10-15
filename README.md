@@ -2,6 +2,8 @@
 
 A Rust command-line tool that maps CWEs, CVEs, ASD STIG Rules, and RMF Controls
 
+RuskTeX derives its name from an internal tool called "RiskTeX" which was used to generate LaTeX-formatted risk reports with previous CVSS versions.
+
 ## Installation
 
 ### Prerequisites

@@ -1,11 +1,17 @@
 [package]
 name = "rusktex"
 version = "0.1.0"
-edition = "2021"
-authors = ["RuskTeX Database Builder"]
-description = "A command-line tool to build SQLite database from CWE, NIST 800-53, and NVD data"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Jon Hood <squinky86@gmail.com>"]
+description = "A command-line tool to build a SQLite database from CWE, NIST 800-53, and NVD data"
+readme = "README.md"
 license = "MIT"
+license-file = "LICENSE"
 repository = "https://github.com/squinky86/RuskTeX"
+
+[lints.rust]
+unsafe_code = "forbid"
 
 [dependencies]
 tokio = { version = "1.47", features = ["full"] }
