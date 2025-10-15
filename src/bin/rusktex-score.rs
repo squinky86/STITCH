@@ -1,10 +1,10 @@
-// src/bin/rusktex-score.rs
+use rusktex::nvd::CvssDataV40;
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use cvss::v3::Base;
 use cvss::v4::Vector;
-use rusqlite::{fallible_streaming_iterator::FallibleStreamingIterator, params, Connection};
+use rusqlite::{params, Connection};
 use std::str::FromStr;
 
 /// A tool to calculate CVSS scores from a vector string or a CVE identifier.
@@ -222,51 +222,183 @@ fn score_from_cwe(cwe_id: &str, db_path: &str) -> Result<()> {
 	// PROCESS 1: Direct NVD Scores
 	// Find direct instances of this CWE in the Vulnerability table
 	let mut stmt = conn.prepare(
-		"SELECT * FROM Vulnerability WHERE id IN (SELECT VulnerabilityId FROM MapVulnerabilityWeakness WHERE WeaknessId = ?1) AND scoreVersion >= 4",
+		"SELECT
+			attackVector,
+			attackComplexity,
+			attackRequirements,
+			privilegesRequired,
+            userInteraction,
+			vulnConfidentialityImpact,
+			vulnIntegrityImpact,
+            vulnAvailabilityImpact,
+			subConfidentialityImpact,
+			subIntegrityImpact,
+            subAvailabilityImpact,
+			exploitMaturity,
+			confidentialityRequirement,
+			integrityRequirement,
+			availabilityRequirement,
+			modifiedAttackVector,
+			modifiedAttackComplexity,
+			modifiedAttackRequirements,
+			modifiedPrivilegesRequired,
+			modifiedUserInteraction,
+			modifiedVulnConfidentialityImpact,
+			modifiedVulnIntegrityImpact,
+			modifiedVulnAvailabilityImpact,
+			modifiedSubConfidentialityImpact,
+			modifiedSubIntegrityImpact,
+			modifiedSubAvailabilityImpact,
+			Safety,
+			Automatable,
+			providerUrgency,
+			Recovery,
+			valueDensity,
+			vulnerabilityResponseEffort
+		FROM Vulnerability WHERE id IN (SELECT VulnerabilityId FROM MapVulnerabilityWeakness WHERE WeaknessId = ?2) AND scoreVersion = ?1",
 	)?;
-	let mut rows = stmt.query(params![cwe_num_id])?;
-	println!("Found {} CVEs.", rows.count().unwrap());
+	let mut cve_ids: Vec<CvssDataV40> = stmt
+		.query_map(params![4, cwe_num_id], |row| {
+			Ok(CvssDataV40 {
+				attack_vector: row.get(0)?,
+				attack_complexity: row.get(1)?,
+				attack_requirements: row.get(2)?,
+				privileges_required: row.get(3)?,
+				user_interaction: row.get(4)?,
+				vuln_confidentiality_impact: row.get(5)?,
+				vuln_integrity_impact: row.get(6)?,
+				vuln_availability_impact: row.get(7)?,
+				sub_confidentiality_impact: row.get(8)?,
+				sub_integrity_impact: row.get(9)?,
+				sub_availability_impact: row.get(10)?,
+				exploit_maturity: row.get(11)?,
+				confidentiality_requirement: row.get(12)?,
+				integrity_requirement: row.get(13)?,
+				availability_requirement: row.get(14)?,
+				modified_attack_vector: row.get(15)?,
+				modified_attack_complexity: row.get(16)?,
+				modified_attack_requirements: row.get(17)?,
+				modified_privileges_required: row.get(18)?,
+				modified_user_interaction: row.get(19)?,
+				modified_vuln_confidentiality_impact: row.get(20)?,
+				modified_vuln_integrity_impact: row.get(21)?,
+				modified_vuln_availability_impact: row.get(22)?,
+				modified_sub_confidentiality_impact: row.get(23)?,
+				modified_sub_integrity_impact: row.get(24)?,
+				modified_sub_availability_impact: row.get(25)?,
+				safety: row.get(26)?,
+				automatable: row.get(27)?,
+				provider_urgency: row.get(28)?,
+				recovery: row.get(29)?,
+				value_density: row.get(30)?,
+				vulnerability_response_effort: row.get(31)?,
+				version: "4".to_string(),
+				base_score: 0.0,
+				base_severity: "".to_string(),
+				vector_string: "".to_string(),
+			})
+		})?
+		.collect::<Result<Vec<CvssDataV40>, _>>()?;
 
-    /*
-	// Map the database's full metric names to their CVSS 4.0 single-letter abbreviations
-    let vector_string = format!(
-        "CVSS:4.0/AV:{}/AC:{}/AT:{}/PR:{}/UI:{}/VC:{}/VI:{}/VA:{}/SC:{}/SI:{}/SA:{}/E:{}/CR:{}/IR:{}/AR:{}/MAV:{}/MAC:{}/MAT:{}/MPR:{}/MUI:{}/MVC:{}/MVI:{}/MVA:{}/MSC:{}/MSI:{}/MSA:{}/S:{}/AU:{}/U:{}/R:{}/V:{}/RE:{}",
-        map_metric(&cve_data.0)?,
-		map_metric(&cve_data.1)?,
-		map_metric(&cve_data.2)?,
-        map_metric(&cve_data.3)?,
-		map_metric(&cve_data.4)?,
-		map_metric(&cve_data.5)?,
-        map_metric(&cve_data.6)?,
-		map_metric(&cve_data.7)?,
-		map_metric(&cve_data.8)?,
-        map_metric(&cve_data.9)?,
-		map_metric(&cve_data.10)?,
-		map_metric(&cve_data.11)?,
-		map_metric(&cve_data.12)?,
-		map_metric(&cve_data.13)?,
-		map_metric(&cve_data.14)?,
-		map_metric(&cve_data.15)?,
-		map_metric(&cve_data.16)?,
-		map_metric(&cve_data.17)?,
-		map_metric(&cve_data.18)?,
-		map_metric(&cve_data.19)?,
-		map_metric(&cve_data.20)?,
-		map_metric(&cve_data.21)?,
-		map_metric(&cve_data.22)?,
-		map_metric(&cve_data.23)?,
-		map_metric(&cve_data.24)?,
-		map_metric(&cve_data.25)?,
-		map_metric(&cve_data.26)?,
-		map_metric(&cve_data.27)?,
-		map_metric(&cve_data.28)?,
-		map_metric(&cve_data.29)?,
-		map_metric(&cve_data.30)?,
-		map_metric(&cve_data.31)?
-    );
+	println!("Found {} CVSS 4.0 CVEs.", cve_ids.len());
 
-    println!("Found CVE: {} using CVSS Version {}. Constructing CVSS 4.0 vector from database: {}.", cve_id, cve_data.32, vector_string);
-    score_from_vector(&vector_string)?;*/
+	if cve_ids.len() < 5 {
+		println!("Not enough CVEs to generate a reliable score using CVSS 4.0. Checking for CVSS 3.1 CVEs.");
+		let tmp_cves: Vec<CvssDataV40> = stmt
+			.query_map(params![3, cwe_num_id], |row| {
+			Ok(CvssDataV40 {
+				attack_vector: row.get(0)?,
+				attack_complexity: row.get(1)?,
+				attack_requirements: row.get(2)?,
+				privileges_required: row.get(3)?,
+				user_interaction: row.get(4)?,
+				vuln_confidentiality_impact: row.get(5)?,
+				vuln_integrity_impact: row.get(6)?,
+				vuln_availability_impact: row.get(7)?,
+				sub_confidentiality_impact: row.get(8)?,
+				sub_integrity_impact: row.get(9)?,
+				sub_availability_impact: row.get(10)?,
+				exploit_maturity: row.get(11)?,
+				confidentiality_requirement: row.get(12)?,
+				integrity_requirement: row.get(13)?,
+				availability_requirement: row.get(14)?,
+				modified_attack_vector: row.get(15)?,
+				modified_attack_complexity: row.get(16)?,
+				modified_attack_requirements: row.get(17)?,
+				modified_privileges_required: row.get(18)?,
+				modified_user_interaction: row.get(19)?,
+				modified_vuln_confidentiality_impact: row.get(20)?,
+				modified_vuln_integrity_impact: row.get(21)?,
+				modified_vuln_availability_impact: row.get(22)?,
+				modified_sub_confidentiality_impact: row.get(23)?,
+				modified_sub_integrity_impact: row.get(24)?,
+				modified_sub_availability_impact: row.get(25)?,
+				safety: row.get(26)?,
+				automatable: row.get(27)?,
+				provider_urgency: row.get(28)?,
+				recovery: row.get(29)?,
+				value_density: row.get(30)?,
+				vulnerability_response_effort: row.get(31)?,
+				version: "3.1".to_string(),
+				base_score: 0.0,
+				base_severity: "".to_string(),
+				vector_string: "".to_string(),
+			})
+		})?
+		.collect::<Result<Vec<CvssDataV40>, _>>()?;
+		println!("Found {} CVSS 3 and 3.1 CVEs.", tmp_cves.len());
+		cve_ids.extend(tmp_cves);
+	}
+
+	if cve_ids.len() < 5 {
+		println!("Not enough CVEs to generate a reliable score using CVSS 4.0, 3.1, and 3.0. Checking for CVSS 2.0 CVEs.");
+		let tmp_cves: Vec<CvssDataV40> = stmt
+			.query_map(params![2, cwe_num_id], |row| {
+			Ok(CvssDataV40 {
+				attack_vector: row.get(0)?,
+				attack_complexity: row.get(1)?,
+				attack_requirements: row.get(2)?,
+				privileges_required: row.get(3)?,
+				user_interaction: row.get(4)?,
+				vuln_confidentiality_impact: row.get(5)?,
+				vuln_integrity_impact: row.get(6)?,
+				vuln_availability_impact: row.get(7)?,
+				sub_confidentiality_impact: row.get(8)?,
+				sub_integrity_impact: row.get(9)?,
+				sub_availability_impact: row.get(10)?,
+				exploit_maturity: row.get(11)?,
+				confidentiality_requirement: row.get(12)?,
+				integrity_requirement: row.get(13)?,
+				availability_requirement: row.get(14)?,
+				modified_attack_vector: row.get(15)?,
+				modified_attack_complexity: row.get(16)?,
+				modified_attack_requirements: row.get(17)?,
+				modified_privileges_required: row.get(18)?,
+				modified_user_interaction: row.get(19)?,
+				modified_vuln_confidentiality_impact: row.get(20)?,
+				modified_vuln_integrity_impact: row.get(21)?,
+				modified_vuln_availability_impact: row.get(22)?,
+				modified_sub_confidentiality_impact: row.get(23)?,
+				modified_sub_integrity_impact: row.get(24)?,
+				modified_sub_availability_impact: row.get(25)?,
+				safety: row.get(26)?,
+				automatable: row.get(27)?,
+				provider_urgency: row.get(28)?,
+				recovery: row.get(29)?,
+				value_density: row.get(30)?,
+				vulnerability_response_effort: row.get(31)?,
+				version: "2".to_string(),
+				base_score: 0.0,
+				base_severity: "".to_string(),
+				vector_string: "".to_string(),
+			})
+		})?
+		.collect::<Result<Vec<CvssDataV40>, _>>()?;
+		println!("Found {} CVSS 2.0 CVEs.", tmp_cves.len());
+		cve_ids.extend(tmp_cves);
+	}
+
+	println!("TODO: Score with the {} CVEs in memory.", cve_ids.len());
 
     Ok(())
 }
