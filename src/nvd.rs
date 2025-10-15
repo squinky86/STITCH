@@ -289,7 +289,7 @@ pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
 		let mut nvd_temp_json_gz = NamedTempFile::new()?;
 		let mut nvd_temp_json = NamedTempFile::new()?;
 		let nvd_url = format!("https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-{}.json.gz", year);
-		download_file(&nvd_url, &mut nvd_temp_json_gz, false, format!("\t\tDownloading {} NVD JSON…", year), "✓".to_string(), &args).await?;
+		download_file(&nvd_url, &mut nvd_temp_json_gz, false, format!("\t\tDownloading {} NVD JSON…", year), &args).await?;
 		
 		p(format!("\t\tDeflating {} NVD JSON…", year).to_string().as_ref(), false);
 		decompress_gzip(&mut nvd_temp_json_gz, &mut nvd_temp_json).await?;

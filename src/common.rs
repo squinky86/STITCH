@@ -31,7 +31,7 @@ pub async fn decompress_gzip(input: &mut NamedTempFile, output: &mut NamedTempFi
     Ok(())
 }
 
-pub async fn download_file(url: &str, file: &mut NamedTempFile, silent: bool, prefix: String, postfix: String, args: &Args) -> Result<()> {
+pub async fn download_file(url: &str, file: &mut NamedTempFile, silent: bool, prefix: String, args: &Args) -> Result<()> {
 	let mut progress_bar: Option<ProgressBar> = None;
 	
 	let client = Client::new();
@@ -70,13 +70,14 @@ pub async fn download_file(url: &str, file: &mut NamedTempFile, silent: bool, pr
 		if !silent {
 			if let Some(pb) = &progress_bar {
 				pb.inc(chunk.len() as u64);
+				pb.set_message(format!("{}/{}B", pb.position(), &total_size));
 			}
 		}
     }
 
 	if !silent {
 		if let Some(pb) = &progress_bar {
-			pb.finish_with_message(postfix);
+			pb.finish_with_message(format!("✓ {}B", pb.position()));
 			println!();
 		}
 	}
