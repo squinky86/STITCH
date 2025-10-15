@@ -15,10 +15,6 @@ pub struct Args {
 	#[arg(short, long, default_value = "rusktex.db")]
 	pub output: String,
 
-	/// Force download even if file exists
-	#[arg(short, long)]
-	pub force: bool,
-
 	/// Verbose output
 	#[arg(short, long)]
 	pub verbose: bool,

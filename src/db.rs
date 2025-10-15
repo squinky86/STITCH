@@ -211,17 +211,17 @@ pub fn display_database_summary(conn: &Connection) -> Result<()> {
 
 	// Count entries
 	let mut stmt = conn.prepare("SELECT COUNT(*) FROM Weakness")?;
-	let entry_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	p(format!("CWE Entries: {}", entry_count).to_string().as_ref(), true);
+	let mut tmp_count: i64  = stmt.query_row([], |row| row.get(0))?;
+	p(format!("CWE Entries: {}", tmp_count).to_string().as_ref(), true);
 
 	// Count relationships
-	let mut stmt = conn.prepare("SELECT COUNT(*) FROM WeaknessRelationship")?;
-	let rel_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	p(format!("Relationships: {}", rel_count).to_string().as_ref(), true);
+	stmt = conn.prepare("SELECT COUNT(*) FROM WeaknessRelationship")?;
+	tmp_count = stmt.query_row([], |row| row.get(0))?;
+	p(format!("Relationships: {}", tmp_count).to_string().as_ref(), true);
 
-	if rel_count > 0 {
+	if tmp_count > 0 {
 		p("Relationship Types:", true);
-		let mut stmt = conn.prepare(
+		stmt = conn.prepare(
 			"SELECT nature, COUNT(*) as count FROM WeaknessRelationship 
              GROUP BY nature ORDER BY count DESC",
 		)?;
@@ -235,43 +235,63 @@ pub fn display_database_summary(conn: &Connection) -> Result<()> {
 	}
 
 	// Count RMF Families
-	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFFamily")?;
-	let fam_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	p(format!("RMF Families: {}", fam_count).to_string().as_ref(), true);
+	stmt = conn.prepare("SELECT COUNT(*) FROM RMFFamily")?;
+	tmp_count = stmt.query_row([], |row| row.get(0))?;
+	p(format!("RMF Families: {}", tmp_count).to_string().as_ref(), true);
 
 	// Count RMF Controls
-	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFControl")?;
-	let control_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	p(format!("RMF Controls: {}", control_count).to_string().as_ref(), true);
+	stmt = conn.prepare("SELECT COUNT(*) FROM RMFControl")?;
+	tmp_count = stmt.query_row([], |row| row.get(0))?;
+	p(format!("RMF Controls: {}", tmp_count).to_string().as_ref(), true);
 
 	// Count RMF CCIs
-	let mut stmt = conn.prepare("SELECT COUNT(*) FROM RMFCCI")?;
-	let cci_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	p(format!("RMF CCIs: {}", cci_count).to_string().as_ref(), true);
+	stmt = conn.prepare("SELECT COUNT(*) FROM RMFCCI")?;
+	tmp_count = stmt.query_row([], |row| row.get(0))?;
+	p(format!("RMF CCIs: {}", tmp_count).to_string().as_ref(), true);
 
 	// Count STIGs
-	let mut stmt = conn.prepare("SELECT COUNT(*) FROM STIG")?;
-	let stig_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	p(format!("STIGs: {}", stig_count).to_string().as_ref(), true);
+	stmt = conn.prepare("SELECT COUNT(*) FROM STIG")?;
+	tmp_count = stmt.query_row([], |row| row.get(0))?;
+	p(format!("STIGs: {}", tmp_count).to_string().as_ref(), true);
 
 	// Count STIG Checks
-	let mut stmt = conn.prepare("SELECT COUNT(*) FROM STIGCheck")?;
-	let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	p(format!("STIG Checks: {}", check_count).to_string().as_ref(), true);
+	stmt = conn.prepare("SELECT COUNT(*) FROM STIGCheck")?;
+	tmp_count = stmt.query_row([], |row| row.get(0))?;
+	p(format!("STIG Checks: {}", tmp_count).to_string().as_ref(), true);
 
+	stmt = conn.prepare("SELECT COUNT(*) FROM Vulnerability")?;
+    tmp_count = stmt.query_row([], |row| row.get(0))?;
+    p(format!("CVEs: {}", tmp_count).to_string().as_ref(), true);
+
+	stmt = conn.prepare("SELECT COUNT(*) FROM Weakness")?;
+    tmp_count = stmt.query_row([], |row| row.get(0))?;
+    p(format!("CWEs: {}", tmp_count).to_string().as_ref(), true);
+
+	stmt = conn.prepare("SELECT COUNT(*) FROM Weakness WHERE view = TRUE")?;
+    tmp_count = stmt.query_row([], |row| row.get(0))?;
+    p(format!("\tViews: {}", tmp_count).to_string().as_ref(), true);
+	
+	stmt = conn.prepare("SELECT COUNT(*) FROM Weakness WHERE category = TRUE")?;
+    tmp_count = stmt.query_row([], |row| row.get(0))?;
+    p(format!("\tCategories: {}", tmp_count).to_string().as_ref(), true);
+
+	stmt = conn.prepare("SELECT COUNT(*) FROM Weakness WHERE view = FALSE AND category = FALSE")?;
+    tmp_count = stmt.query_row([], |row| row.get(0))?;
+    p(format!("\tRegular: {}", tmp_count).to_string().as_ref(), true);
+	
 	// Count STIG Checks
-	let mut stmt = conn.prepare("SELECT COUNT(*) FROM MapSTIGCheckCCI")?;
-	let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
-	p(format!("STIG Check to CCI Mappings: {}", check_count).to_string().as_ref(), true);
+	stmt = conn.prepare("SELECT COUNT(*) FROM MapSTIGCheckCCI")?;
+	tmp_count = stmt.query_row([], |row| row.get(0))?;
+	p(format!("STIG Check to CCI Mappings: {}", tmp_count).to_string().as_ref(), true);
 
 	// Count Mappings
-	let mut stmt = conn.prepare("SELECT COUNT(*) FROM STIGCheck WHERE CWEId IS NOT NULL")?;
-    let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
-    p(format!("STIG→CWE Mappings: {}", check_count).to_string().as_ref(), true);
+	stmt = conn.prepare("SELECT COUNT(*) FROM STIGCheck WHERE CWEId IS NOT NULL")?;
+    tmp_count = stmt.query_row([], |row| row.get(0))?;
+    p(format!("STIG→CWE Mappings: {}", tmp_count).to_string().as_ref(), true);
 
-    let mut stmt = conn.prepare("SELECT COUNT(*) FROM Weakness WHERE STIGCheckId IS NOT NULL")?;
-    let check_count: i64 = stmt.query_row([], |row| row.get(0))?;
-    p(format!("CWE→STIG Mappings: {}", check_count).to_string().as_ref(), true);
+    stmt = conn.prepare("SELECT COUNT(*) FROM Weakness WHERE STIGCheckId IS NOT NULL")?;
+    tmp_count = stmt.query_row([], |row| row.get(0))?;
+    p(format!("CWE→STIG Mappings: {}", tmp_count).to_string().as_ref(), true);
 
 	Ok(())
 }
