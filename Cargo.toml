@@ -7,7 +7,6 @@ authors = ["Jon Hood <squinky86@gmail.com>"]
 description = "A command-line tool to build a SQLite database from CWE, NIST 800-53, and NVD data"
 readme = "README.md"
 license = "MIT"
-license-file = "LICENSE"
 repository = "https://github.com/squinky86/RuskTeX"
 
 [lints.rust]

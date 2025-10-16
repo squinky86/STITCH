@@ -23,7 +23,9 @@
                     "--bin=rusktex-score"
                 ]
             },
-            "args": ["CWE-1104"]
+            "args": [
+                "CWE-917"
+            ]
         },
         {
             "name": "Debug unit tests in executable 'rusktex'",

@@ -408,125 +408,147 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 			
 			if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v40 {
 				if !cvss_metrics.is_empty() {
-					score_version = 4;
-					cvss_v4 = cvss_metrics[0].cvss_data.clone();
-				}
-			}
-			else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v31 {
-				if !cvss_metrics.is_empty() {
-					score_version = 3;
-					let Some(cvss_v31) = cvss_metrics.get(0) else { continue; };
-					cvss_v4.attack_vector = if cvss_v31.cvss_data.attack_vector == "ADJACENT_NETWORK" { "ADJACENT".to_string() } else { cvss_v31.cvss_data.attack_vector.clone() };
-					cvss_v4.attack_complexity = cvss_v31.cvss_data.attack_complexity.clone();
-					cvss_v4.privileges_required = cvss_v31.cvss_data.privileges_required.clone();
-					cvss_v4.user_interaction = if cvss_v31.cvss_data.user_interaction == "REQUIRED" { "ACTIVE".to_string() } else { cvss_v31.cvss_data.user_interaction.clone() };
-					
-					//The Scope metric reflects on the subsequent system's vulnerability
-					if cvss_v31.cvss_data.scope == "CHANGED" {
-						cvss_v4.sub_confidentiality_impact = cvss_v31.cvss_data.confidentiality_impact.clone();
-						cvss_v4.sub_integrity_impact = cvss_v31.cvss_data.integrity_impact.clone();
-						cvss_v4.sub_availability_impact = cvss_v31.cvss_data.availability_impact.clone();
-					}
-					else {
-						cvss_v4.sub_confidentiality_impact = "NONE".to_string();
-						cvss_v4.sub_integrity_impact = "NONE".to_string();
-						cvss_v4.sub_availability_impact = "NONE".to_string();
-					}
-					
-					cvss_v4.vuln_confidentiality_impact = cvss_v31.cvss_data.confidentiality_impact.clone();
-					cvss_v4.vuln_integrity_impact = cvss_v31.cvss_data.integrity_impact.clone();
-					cvss_v4.vuln_availability_impact = cvss_v31.cvss_data.availability_impact.clone();
-				}
-			}
-			else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v30 {
-				if !cvss_metrics.is_empty() {
-					score_version = 3;
-					let Some(cvss_v30) = cvss_metrics.get(0) else { continue; };
-					cvss_v4.attack_vector = if cvss_v30.cvss_data.attack_vector == "ADJACENT_NETWORK" { "ADJACENT".to_string() } else { cvss_v30.cvss_data.attack_vector.clone() };
-					cvss_v4.attack_complexity = cvss_v30.cvss_data.attack_complexity.clone();
-					cvss_v4.privileges_required = cvss_v30.cvss_data.privileges_required.clone();
-					cvss_v4.user_interaction = if cvss_v30.cvss_data.user_interaction == "REQUIRED" { "ACTIVE".to_string() } else { cvss_v30.cvss_data.user_interaction.clone() };
-					
-					//The Scope metric reflects on the subsequent system's vulnerability
-					if cvss_v30.cvss_data.scope == "CHANGED" {
-						cvss_v4.sub_confidentiality_impact = cvss_v30.cvss_data.confidentiality_impact.clone();
-						cvss_v4.sub_integrity_impact = cvss_v30.cvss_data.integrity_impact.clone();
-						cvss_v4.sub_availability_impact = cvss_v30.cvss_data.availability_impact.clone();
-					}
-					else {
-						cvss_v4.sub_confidentiality_impact = "NONE".to_string();
-						cvss_v4.sub_integrity_impact = "NONE".to_string();
-						cvss_v4.sub_availability_impact = "NONE".to_string();
-					}
-					
-					cvss_v4.vuln_confidentiality_impact = cvss_v30.cvss_data.confidentiality_impact.clone();
-					cvss_v4.vuln_integrity_impact = cvss_v30.cvss_data.integrity_impact.clone();
-					cvss_v4.vuln_availability_impact = cvss_v30.cvss_data.availability_impact.clone();
-				}
-			}
-			else if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v2 {
-				if !cvss_metrics.is_empty() {
-					score_version = 2;
-					let Some(cvss_v2) = cvss_metrics.get(0) else { continue; };
-					cvss_v4.attack_vector = match cvss_v2.cvss_data.access_vector.as_str() {
-						"NETWORK" => "NETWORK".to_string(),
-						"ADJACENT_NETWORK" => "ADJACENT".to_string(),
-						"LOCAL" => "LOCAL".to_string(),
-						_ => "NOT_DEFINED".to_string(),
-					};
-					match cvss_v2.cvss_data.access_complexity.as_str() {
-						"LOW" => {
-							cvss_v4.attack_complexity = "LOW".to_string();
-							cvss_v4.attack_requirements = "NONE".to_string();
-						},
-						"MEDIUM" => {
-							cvss_v4.attack_complexity = "LOW".to_string();
-							cvss_v4.attack_requirements = "PRESENT".to_string();
+					for cvss_metric in cvss_metrics {
+						if cvss_metric.type_ == "Primary" {
+							cvss_v4 = cvss_metric.cvss_data.clone();
+							score_version = 4;
+							break;
 						}
-						_ => {
-							cvss_v4.attack_complexity = "HIGH".to_string();
-							cvss_v4.attack_requirements = "PRESENT".to_string();
+					}
+				}
+			}
+
+			if score_version <= 0 {
+				if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v31 {
+					for cvss_metric in cvss_metrics {
+						if cvss_metric.type_ == "Primary" {
+							score_version = 3;
+							cvss_v4.attack_vector = if cvss_metric.cvss_data.attack_vector == "ADJACENT_NETWORK" { "ADJACENT".to_string() } else { cvss_metric.cvss_data.attack_vector.clone() };
+							cvss_v4.attack_complexity = cvss_metric.cvss_data.attack_complexity.clone();
+							cvss_v4.privileges_required = cvss_metric.cvss_data.privileges_required.clone();
+							cvss_v4.user_interaction = if cvss_metric.cvss_data.user_interaction == "REQUIRED" { "ACTIVE".to_string() } else { cvss_metric.cvss_data.user_interaction.clone() };
+							
+							//The Scope metric reflects on the subsequent system's vulnerability
+							if cvss_metric.cvss_data.scope == "CHANGED" {
+								cvss_v4.sub_confidentiality_impact = cvss_metric.cvss_data.confidentiality_impact.clone();
+								cvss_v4.sub_integrity_impact = cvss_metric.cvss_data.integrity_impact.clone();
+								cvss_v4.sub_availability_impact = cvss_metric.cvss_data.availability_impact.clone();
+							}
+							else {
+								cvss_v4.sub_confidentiality_impact = "NONE".to_string();
+								cvss_v4.sub_integrity_impact = "NONE".to_string();
+								cvss_v4.sub_availability_impact = "NONE".to_string();
+							}
+							
+							cvss_v4.vuln_confidentiality_impact = cvss_metric.cvss_data.confidentiality_impact.clone();
+							cvss_v4.vuln_integrity_impact = cvss_metric.cvss_data.integrity_impact.clone();
+							cvss_v4.vuln_availability_impact = cvss_metric.cvss_data.availability_impact.clone();
+							break;
 						}
-					};
-					cvss_v4.privileges_required = match cvss_v2.cvss_data.authentication.as_str() {
-						"NONE" => "NONE".to_string(),
-						"SINGLE" => "LOW".to_string(),
-						_ => "HIGH".to_string(),
-					};
-					cvss_v4.vuln_confidentiality_impact = match cvss_v2.cvss_data.confidentiality_impact.as_str() {
-						"NONE" => "NONE".to_string(),
-						"PARTIAL" => "LOW".to_string(),
-						_ => "HIGH".to_string(),
-					};
-					cvss_v4.vuln_integrity_impact = match cvss_v2.cvss_data.integrity_impact.as_str() {
-						"NONE" => "NONE".to_string(),
-						"PARTIAL" => "LOW".to_string(),
-						_ => "HIGH".to_string(),
-					};
-					cvss_v4.vuln_availability_impact = match cvss_v2.cvss_data.availability_impact.as_str() {
-						"NONE" => "NONE".to_string(),
-						"PARTIAL" => "LOW".to_string(),
-						_ => "HIGH".to_string(),
-					};
-					if cvss_v2.obtain_all_privilege {
-						cvss_v4.sub_confidentiality_impact = "HIGH".to_string();
-						cvss_v4.sub_integrity_impact = "HIGH".to_string();
-						cvss_v4.sub_availability_impact = "HIGH".to_string();
 					}
-					else if cvss_v2.obtain_user_privilege {
-						cvss_v4.sub_confidentiality_impact = "LOW".to_string();
-						cvss_v4.sub_integrity_impact = "LOW".to_string();
-						cvss_v4.sub_availability_impact = "LOW".to_string();
+				}
+			}
+
+			if score_version <= 0 {
+				if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v30 {
+					for cvss_metric in cvss_metrics {
+						if cvss_metric.type_ == "Primary" {
+							score_version = 3;
+							cvss_v4.attack_vector = if cvss_metric.cvss_data.attack_vector == "ADJACENT_NETWORK" { "ADJACENT".to_string() } else { cvss_metric.cvss_data.attack_vector.clone() };
+							cvss_v4.attack_complexity = cvss_metric.cvss_data.attack_complexity.clone();
+							cvss_v4.privileges_required = cvss_metric.cvss_data.privileges_required.clone();
+							cvss_v4.user_interaction = if cvss_metric.cvss_data.user_interaction == "REQUIRED" { "ACTIVE".to_string() } else { cvss_metric.cvss_data.user_interaction.clone() };
+							
+							//The Scope metric reflects on the subsequent system's vulnerability
+							if cvss_metric.cvss_data.scope == "CHANGED" {
+								cvss_v4.sub_confidentiality_impact = cvss_metric.cvss_data.confidentiality_impact.clone();
+								cvss_v4.sub_integrity_impact = cvss_metric.cvss_data.integrity_impact.clone();
+								cvss_v4.sub_availability_impact = cvss_metric.cvss_data.availability_impact.clone();
+							}
+							else {
+								cvss_v4.sub_confidentiality_impact = "NONE".to_string();
+								cvss_v4.sub_integrity_impact = "NONE".to_string();
+								cvss_v4.sub_availability_impact = "NONE".to_string();
+							}
+							
+							cvss_v4.vuln_confidentiality_impact = cvss_metric.cvss_data.confidentiality_impact.clone();
+							cvss_v4.vuln_integrity_impact = cvss_metric.cvss_data.integrity_impact.clone();
+							cvss_v4.vuln_availability_impact = cvss_metric.cvss_data.availability_impact.clone();
+							break;
+						}
 					}
-					else if cvss_v2.obtain_other_privilege {
-						cvss_v4.sub_confidentiality_impact = "LOW".to_string();
-						cvss_v4.sub_integrity_impact = "LOW".to_string();
-						cvss_v4.sub_availability_impact = "LOW".to_string();
-					}
-					else {
-						cvss_v4.sub_confidentiality_impact = "NONE".to_string();
-						cvss_v4.sub_integrity_impact = "NONE".to_string();
-						cvss_v4.sub_availability_impact = "NONE".to_string();
+				}
+			}
+			
+			if score_version <= 0 {
+				if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v2 {
+					if !cvss_metrics.is_empty() {
+						for cvss_metric in cvss_metrics {
+							if cvss_metric.type_ == "Primary" {
+								score_version = 2;
+								cvss_v4.attack_vector = match cvss_metric.cvss_data.access_vector.as_str() {
+									"NETWORK" => "NETWORK".to_string(),
+									"ADJACENT_NETWORK" => "ADJACENT".to_string(),
+									"LOCAL" => "LOCAL".to_string(),
+									_ => "NOT_DEFINED".to_string(),
+								};
+								match cvss_metric.cvss_data.access_complexity.as_str() {
+									"LOW" => {
+										cvss_v4.attack_complexity = "LOW".to_string();
+										cvss_v4.attack_requirements = "NONE".to_string();
+									},
+									"MEDIUM" => {
+										cvss_v4.attack_complexity = "LOW".to_string();
+										cvss_v4.attack_requirements = "PRESENT".to_string();
+									}
+									_ => {
+										cvss_v4.attack_complexity = "HIGH".to_string();
+										cvss_v4.attack_requirements = "PRESENT".to_string();
+									}
+								};
+								cvss_v4.privileges_required = match cvss_metric.cvss_data.authentication.as_str() {
+									"NONE" => "NONE".to_string(),
+									"SINGLE" => "LOW".to_string(),
+									_ => "HIGH".to_string(),
+								};
+								cvss_v4.vuln_confidentiality_impact = match cvss_metric.cvss_data.confidentiality_impact.as_str() {
+									"NONE" => "NONE".to_string(),
+									"PARTIAL" => "LOW".to_string(),
+									_ => "HIGH".to_string(),
+								};
+								cvss_v4.vuln_integrity_impact = match cvss_metric.cvss_data.integrity_impact.as_str() {
+									"NONE" => "NONE".to_string(),
+									"PARTIAL" => "LOW".to_string(),
+									_ => "HIGH".to_string(),
+								};
+								cvss_v4.vuln_availability_impact = match cvss_metric.cvss_data.availability_impact.as_str() {
+									"NONE" => "NONE".to_string(),
+									"PARTIAL" => "LOW".to_string(),
+									_ => "HIGH".to_string(),
+								};
+								if cvss_metric.obtain_all_privilege {
+									cvss_v4.sub_confidentiality_impact = "HIGH".to_string();
+									cvss_v4.sub_integrity_impact = "HIGH".to_string();
+									cvss_v4.sub_availability_impact = "HIGH".to_string();
+								}
+								else if cvss_metric.obtain_user_privilege {
+									cvss_v4.sub_confidentiality_impact = "LOW".to_string();
+									cvss_v4.sub_integrity_impact = "LOW".to_string();
+									cvss_v4.sub_availability_impact = "LOW".to_string();
+								}
+								else if cvss_metric.obtain_other_privilege {
+									cvss_v4.sub_confidentiality_impact = "LOW".to_string();
+									cvss_v4.sub_integrity_impact = "LOW".to_string();
+									cvss_v4.sub_availability_impact = "LOW".to_string();
+								}
+								else {
+									cvss_v4.sub_confidentiality_impact = "NONE".to_string();
+									cvss_v4.sub_integrity_impact = "NONE".to_string();
+									cvss_v4.sub_availability_impact = "NONE".to_string();
+								}
+								break;
+							}
+						}
 					}
 				}
 			}
