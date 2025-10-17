@@ -361,6 +361,13 @@ fn score_cwes(db_path: &str, args: &Args) -> Result<()> {
 			continue;
 		}
 
+		if cwe.1.starts_with("DEPRECATED") {
+			if args.verbose {
+				println!("Deprecated CWEs cannot be scored.");
+			}
+			continue;
+		}
+
 		score_from_cwe(&cwe_id, db_path, &args)?;
 	}
 
@@ -412,7 +419,10 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 		return Ok(());
 	}
 
-	// PROCESS 1: Direct NVD Scores
+	// ROUND 1: Direct NVD Scores
+	if args.verbose {
+		println!("Starting Round 1 Scoring.");
+	}
 	// Find direct instances of this CWE in the Vulnerability table
 	let mut stmt = conn.prepare(
 		"SELECT
@@ -497,6 +507,10 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 		println!("Found {} CVSS 4.0 CVEs.", cves.len());
 	}
 
+	// ROUND 2: Conversion of direct CVSS 3.0 and 3.1 scores
+	if args.verbose {
+		println!("Starting Round 2 Scoring.");
+	}
 	if cves.len() < min_results_to_get_more {
 		if args.verbose {
 			println!("Not enough CVEs to generate a reliable score using CVSS 4.0. Checking for CVSS 3.1 CVEs.");
@@ -550,6 +564,10 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 		cves.extend(tmp_cves);
 	}
 
+	// ROUND 3: Conversion of direct CVSS 2.0 scores
+	if args.verbose {
+		println!("Starting Round 3 Scoring.");
+	}
 	if cves.len() < min_results_to_get_more {
 		if args.verbose {
 			println!("Not enough CVEs to generate a reliable score using CVSS 4.0, 3.1, and 3.0. Checking for CVSS 2.0 CVEs.");
@@ -602,8 +620,1230 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 		cves.extend(tmp_cves);
 	}
 
+	let mut stmt2 = conn.prepare("SELECT source_id FROM WeaknessRelationship WHERE target_id = ?1 AND view_id = ?2")?;
+	let mut processed_cwes: Vec<u32> = Vec::new();
+
+	// ROUND 4: Child CWEs of View 1000
+	if args.verbose {
+		println!("Starting Round 4 Scoring.");
+	}
 	if cves.len() < min_results_to_score {
-		if args.verbose {
+		let child_cwes: Vec<u32> = stmt2.query_map(params![cwe_num_id, 1000], |row| {
+			row.get(0)
+		})?
+		.collect::<Result<Vec<u32>, _>>()?;
+
+		// ROUND 4.1: Child CWEs of View 1000 CVSS 4.0 scores
+		processed_cwes.extend(child_cwes.clone());
+		for child in &child_cwes {
+			let tmp_cves: Vec<CvssDataV40> = stmt
+			.query_map(params![4, child], |row| {
+				Ok(CvssDataV40 {
+					attack_vector: row.get(0)?,
+					attack_complexity: row.get(1)?,
+					attack_requirements: row.get(2)?,
+					privileges_required: row.get(3)?,
+					user_interaction: row.get(4)?,
+					vuln_confidentiality_impact: row.get(5)?,
+					vuln_integrity_impact: row.get(6)?,
+					vuln_availability_impact: row.get(7)?,
+					sub_confidentiality_impact: row.get(8)?,
+					sub_integrity_impact: row.get(9)?,
+					sub_availability_impact: row.get(10)?,
+					exploit_maturity: row.get(11)?,
+					confidentiality_requirement: row.get(12)?,
+					integrity_requirement: row.get(13)?,
+					availability_requirement: row.get(14)?,
+					modified_attack_vector: row.get(15)?,
+					modified_attack_complexity: row.get(16)?,
+					modified_attack_requirements: row.get(17)?,
+					modified_privileges_required: row.get(18)?,
+					modified_user_interaction: row.get(19)?,
+					modified_vuln_confidentiality_impact: row.get(20)?,
+					modified_vuln_integrity_impact: row.get(21)?,
+					modified_vuln_availability_impact: row.get(22)?,
+					modified_sub_confidentiality_impact: row.get(23)?,
+					modified_sub_integrity_impact: row.get(24)?,
+					modified_sub_availability_impact: row.get(25)?,
+					safety: row.get(26)?,
+					automatable: row.get(27)?,
+					provider_urgency: row.get(28)?,
+					recovery: row.get(29)?,
+					value_density: row.get(30)?,
+					vulnerability_response_effort: row.get(31)?,
+					version: "4".to_string(),
+					base_score: 0.0,
+					base_severity: "".to_string(),
+					vector_string: "".to_string(),
+				})
+			})?
+			.collect::<Result<Vec<CvssDataV40>, _>>()?;
+			if args.verbose {
+				println!("Found {} CVSS 4.0 CVEs.", tmp_cves.len());
+			}
+			cves.extend(tmp_cves);
+		}
+
+		if cves.len() < min_results_to_get_more {
+			// ROUND 4.2: Child CWEs of View 1000 CVSS 3.1 and 3.0 scores
+			for child in &child_cwes {
+				let tmp_cves: Vec<CvssDataV40> = stmt
+				.query_map(params![3, child], |row| {
+					Ok(CvssDataV40 {
+						attack_vector: row.get(0)?,
+						attack_complexity: row.get(1)?,
+						attack_requirements: row.get(2)?,
+						privileges_required: row.get(3)?,
+						user_interaction: row.get(4)?,
+						vuln_confidentiality_impact: row.get(5)?,
+						vuln_integrity_impact: row.get(6)?,
+						vuln_availability_impact: row.get(7)?,
+						sub_confidentiality_impact: row.get(8)?,
+						sub_integrity_impact: row.get(9)?,
+						sub_availability_impact: row.get(10)?,
+						exploit_maturity: row.get(11)?,
+						confidentiality_requirement: row.get(12)?,
+						integrity_requirement: row.get(13)?,
+						availability_requirement: row.get(14)?,
+						modified_attack_vector: row.get(15)?,
+						modified_attack_complexity: row.get(16)?,
+						modified_attack_requirements: row.get(17)?,
+						modified_privileges_required: row.get(18)?,
+						modified_user_interaction: row.get(19)?,
+						modified_vuln_confidentiality_impact: row.get(20)?,
+						modified_vuln_integrity_impact: row.get(21)?,
+						modified_vuln_availability_impact: row.get(22)?,
+						modified_sub_confidentiality_impact: row.get(23)?,
+						modified_sub_integrity_impact: row.get(24)?,
+						modified_sub_availability_impact: row.get(25)?,
+						safety: row.get(26)?,
+						automatable: row.get(27)?,
+						provider_urgency: row.get(28)?,
+						recovery: row.get(29)?,
+						value_density: row.get(30)?,
+						vulnerability_response_effort: row.get(31)?,
+						version: "3".to_string(),
+						base_score: 0.0,
+						base_severity: "".to_string(),
+						vector_string: "".to_string(),
+					})
+				})?
+				.collect::<Result<Vec<CvssDataV40>, _>>()?;
+				if args.verbose {
+					println!("Found {} CVSS 3.0 and 3.1 CVEs.", tmp_cves.len());
+				}
+				cves.extend(tmp_cves);
+			}
+		}
+
+		if cves.len() < min_results_to_get_more {
+			// ROUND 4.3: Child CWEs of View 1000 CVSS 2 scores
+			for child in child_cwes {
+				let tmp_cves: Vec<CvssDataV40> = stmt
+				.query_map(params![2, child], |row| {
+					Ok(CvssDataV40 {
+						attack_vector: row.get(0)?,
+						attack_complexity: row.get(1)?,
+						attack_requirements: row.get(2)?,
+						privileges_required: row.get(3)?,
+						user_interaction: row.get(4)?,
+						vuln_confidentiality_impact: row.get(5)?,
+						vuln_integrity_impact: row.get(6)?,
+						vuln_availability_impact: row.get(7)?,
+						sub_confidentiality_impact: row.get(8)?,
+						sub_integrity_impact: row.get(9)?,
+						sub_availability_impact: row.get(10)?,
+						exploit_maturity: row.get(11)?,
+						confidentiality_requirement: row.get(12)?,
+						integrity_requirement: row.get(13)?,
+						availability_requirement: row.get(14)?,
+						modified_attack_vector: row.get(15)?,
+						modified_attack_complexity: row.get(16)?,
+						modified_attack_requirements: row.get(17)?,
+						modified_privileges_required: row.get(18)?,
+						modified_user_interaction: row.get(19)?,
+						modified_vuln_confidentiality_impact: row.get(20)?,
+						modified_vuln_integrity_impact: row.get(21)?,
+						modified_vuln_availability_impact: row.get(22)?,
+						modified_sub_confidentiality_impact: row.get(23)?,
+						modified_sub_integrity_impact: row.get(24)?,
+						modified_sub_availability_impact: row.get(25)?,
+						safety: row.get(26)?,
+						automatable: row.get(27)?,
+						provider_urgency: row.get(28)?,
+						recovery: row.get(29)?,
+						value_density: row.get(30)?,
+						vulnerability_response_effort: row.get(31)?,
+						version: "2".to_string(),
+						base_score: 0.0,
+						base_severity: "".to_string(),
+						vector_string: "".to_string(),
+					})
+				})?
+				.collect::<Result<Vec<CvssDataV40>, _>>()?;
+				if args.verbose {
+					println!("Found {} CVSS 2 CVEs.", tmp_cves.len());
+				}
+				cves.extend(tmp_cves);
+			}
+		}
+	}
+
+	// ROUND 5: Grandchild CWEs of View 1000
+	if args.verbose {
+		println!("Starting Round 5 Scoring.");
+	}
+	if cves.len() < min_results_to_score {
+		for tmp_cwe_id in processed_cwes.clone() {
+				
+			let child_cwes: Vec<u32> = stmt2.query_map(params![tmp_cwe_id, 1000], |row| {
+				row.get(0)
+			})?
+			.collect::<Result<Vec<u32>, _>>()?;
+
+			// ROUND 5.1: Grandchild CWEs of View 1000 CVSS 4.0 scores
+			processed_cwes.extend(child_cwes.clone());
+			for child in &child_cwes {
+				let tmp_cves: Vec<CvssDataV40> = stmt
+				.query_map(params![4, child], |row| {
+					Ok(CvssDataV40 {
+						attack_vector: row.get(0)?,
+						attack_complexity: row.get(1)?,
+						attack_requirements: row.get(2)?,
+						privileges_required: row.get(3)?,
+						user_interaction: row.get(4)?,
+						vuln_confidentiality_impact: row.get(5)?,
+						vuln_integrity_impact: row.get(6)?,
+						vuln_availability_impact: row.get(7)?,
+						sub_confidentiality_impact: row.get(8)?,
+						sub_integrity_impact: row.get(9)?,
+						sub_availability_impact: row.get(10)?,
+						exploit_maturity: row.get(11)?,
+						confidentiality_requirement: row.get(12)?,
+						integrity_requirement: row.get(13)?,
+						availability_requirement: row.get(14)?,
+						modified_attack_vector: row.get(15)?,
+						modified_attack_complexity: row.get(16)?,
+						modified_attack_requirements: row.get(17)?,
+						modified_privileges_required: row.get(18)?,
+						modified_user_interaction: row.get(19)?,
+						modified_vuln_confidentiality_impact: row.get(20)?,
+						modified_vuln_integrity_impact: row.get(21)?,
+						modified_vuln_availability_impact: row.get(22)?,
+						modified_sub_confidentiality_impact: row.get(23)?,
+						modified_sub_integrity_impact: row.get(24)?,
+						modified_sub_availability_impact: row.get(25)?,
+						safety: row.get(26)?,
+						automatable: row.get(27)?,
+						provider_urgency: row.get(28)?,
+						recovery: row.get(29)?,
+						value_density: row.get(30)?,
+						vulnerability_response_effort: row.get(31)?,
+						version: "4".to_string(),
+						base_score: 0.0,
+						base_severity: "".to_string(),
+						vector_string: "".to_string(),
+					})
+				})?
+				.collect::<Result<Vec<CvssDataV40>, _>>()?;
+				if args.verbose {
+					println!("Found {} CVSS 4.0 CVEs.", tmp_cves.len());
+				}
+				cves.extend(tmp_cves);
+			}
+
+			if cves.len() < min_results_to_get_more {
+				// ROUND 5.2: Grandchild CWEs of View 1000 CVSS 3.1 and 3.0 scores
+				for child in &child_cwes {
+					let tmp_cves: Vec<CvssDataV40> = stmt
+					.query_map(params![3, child], |row| {
+						Ok(CvssDataV40 {
+							attack_vector: row.get(0)?,
+							attack_complexity: row.get(1)?,
+							attack_requirements: row.get(2)?,
+							privileges_required: row.get(3)?,
+							user_interaction: row.get(4)?,
+							vuln_confidentiality_impact: row.get(5)?,
+							vuln_integrity_impact: row.get(6)?,
+							vuln_availability_impact: row.get(7)?,
+							sub_confidentiality_impact: row.get(8)?,
+							sub_integrity_impact: row.get(9)?,
+							sub_availability_impact: row.get(10)?,
+							exploit_maturity: row.get(11)?,
+							confidentiality_requirement: row.get(12)?,
+							integrity_requirement: row.get(13)?,
+							availability_requirement: row.get(14)?,
+							modified_attack_vector: row.get(15)?,
+							modified_attack_complexity: row.get(16)?,
+							modified_attack_requirements: row.get(17)?,
+							modified_privileges_required: row.get(18)?,
+							modified_user_interaction: row.get(19)?,
+							modified_vuln_confidentiality_impact: row.get(20)?,
+							modified_vuln_integrity_impact: row.get(21)?,
+							modified_vuln_availability_impact: row.get(22)?,
+							modified_sub_confidentiality_impact: row.get(23)?,
+							modified_sub_integrity_impact: row.get(24)?,
+							modified_sub_availability_impact: row.get(25)?,
+							safety: row.get(26)?,
+							automatable: row.get(27)?,
+							provider_urgency: row.get(28)?,
+							recovery: row.get(29)?,
+							value_density: row.get(30)?,
+							vulnerability_response_effort: row.get(31)?,
+							version: "3".to_string(),
+							base_score: 0.0,
+							base_severity: "".to_string(),
+							vector_string: "".to_string(),
+						})
+					})?
+					.collect::<Result<Vec<CvssDataV40>, _>>()?;
+					if args.verbose {
+						println!("Found {} CVSS 3.0 and 3.1 CVEs.", tmp_cves.len());
+					}
+					cves.extend(tmp_cves);
+				}
+			}
+
+			if cves.len() < min_results_to_get_more {
+				// ROUND 5.3: Grandchild CWEs of View 1000 CVSS 2 scores
+				for child in child_cwes {
+					let tmp_cves: Vec<CvssDataV40> = stmt
+					.query_map(params![2, child], |row| {
+						Ok(CvssDataV40 {
+							attack_vector: row.get(0)?,
+							attack_complexity: row.get(1)?,
+							attack_requirements: row.get(2)?,
+							privileges_required: row.get(3)?,
+							user_interaction: row.get(4)?,
+							vuln_confidentiality_impact: row.get(5)?,
+							vuln_integrity_impact: row.get(6)?,
+							vuln_availability_impact: row.get(7)?,
+							sub_confidentiality_impact: row.get(8)?,
+							sub_integrity_impact: row.get(9)?,
+							sub_availability_impact: row.get(10)?,
+							exploit_maturity: row.get(11)?,
+							confidentiality_requirement: row.get(12)?,
+							integrity_requirement: row.get(13)?,
+							availability_requirement: row.get(14)?,
+							modified_attack_vector: row.get(15)?,
+							modified_attack_complexity: row.get(16)?,
+							modified_attack_requirements: row.get(17)?,
+							modified_privileges_required: row.get(18)?,
+							modified_user_interaction: row.get(19)?,
+							modified_vuln_confidentiality_impact: row.get(20)?,
+							modified_vuln_integrity_impact: row.get(21)?,
+							modified_vuln_availability_impact: row.get(22)?,
+							modified_sub_confidentiality_impact: row.get(23)?,
+							modified_sub_integrity_impact: row.get(24)?,
+							modified_sub_availability_impact: row.get(25)?,
+							safety: row.get(26)?,
+							automatable: row.get(27)?,
+							provider_urgency: row.get(28)?,
+							recovery: row.get(29)?,
+							value_density: row.get(30)?,
+							vulnerability_response_effort: row.get(31)?,
+							version: "2".to_string(),
+							base_score: 0.0,
+							base_severity: "".to_string(),
+							vector_string: "".to_string(),
+						})
+					})?
+					.collect::<Result<Vec<CvssDataV40>, _>>()?;
+					if args.verbose {
+						println!("Found {} CVSS 2 CVEs.", tmp_cves.len());
+					}
+					cves.extend(tmp_cves);
+				}
+			}
+		}
+	}
+
+	// ROUND 6: Progeny CWEs of View 1000
+	if args.verbose {
+		println!("Starting Round 6 Scoring.");
+	}
+	if cves.len() < min_results_to_score {
+		//iterate through all current children
+		let mut progeny_cwes: Vec<u32> = processed_cwes.clone();
+		let mut progeny_iteration_round6: Vec<u32> = Vec::new();
+		while progeny_cwes.len() > 0 {
+			let tmp_cwe_id = progeny_cwes.get(0).unwrap().clone();
+			progeny_cwes.remove(0);
+				
+			if progeny_iteration_round6.contains(&tmp_cwe_id) {
+				//we already populated these CWEs. Move on to the next.
+				continue;
+			}
+			
+			//add this CWE's children to the list to iterate through
+			progeny_iteration_round6.push(tmp_cwe_id);
+			let child_cwes: Vec<u32> = stmt2.query_map(params![tmp_cwe_id, 1000], |row| {
+				row.get(0)
+			})?
+			.collect::<Result<Vec<u32>, _>>()?;
+
+			// ROUND 6.1: Progeny CWEs of View 1000 CVSS 4.0 scores
+			progeny_cwes.extend(child_cwes.clone());
+			progeny_cwes.sort();
+			progeny_cwes.dedup();
+		
+			for child in &child_cwes {
+				if processed_cwes.contains(child) {
+					continue;
+				}
+				
+				processed_cwes.push(*child);
+				let tmp_cves: Vec<CvssDataV40> = stmt
+				.query_map(params![4, child], |row| {
+					Ok(CvssDataV40 {
+						attack_vector: row.get(0)?,
+						attack_complexity: row.get(1)?,
+						attack_requirements: row.get(2)?,
+						privileges_required: row.get(3)?,
+						user_interaction: row.get(4)?,
+						vuln_confidentiality_impact: row.get(5)?,
+						vuln_integrity_impact: row.get(6)?,
+						vuln_availability_impact: row.get(7)?,
+						sub_confidentiality_impact: row.get(8)?,
+						sub_integrity_impact: row.get(9)?,
+						sub_availability_impact: row.get(10)?,
+						exploit_maturity: row.get(11)?,
+						confidentiality_requirement: row.get(12)?,
+						integrity_requirement: row.get(13)?,
+						availability_requirement: row.get(14)?,
+						modified_attack_vector: row.get(15)?,
+						modified_attack_complexity: row.get(16)?,
+						modified_attack_requirements: row.get(17)?,
+						modified_privileges_required: row.get(18)?,
+						modified_user_interaction: row.get(19)?,
+						modified_vuln_confidentiality_impact: row.get(20)?,
+						modified_vuln_integrity_impact: row.get(21)?,
+						modified_vuln_availability_impact: row.get(22)?,
+						modified_sub_confidentiality_impact: row.get(23)?,
+						modified_sub_integrity_impact: row.get(24)?,
+						modified_sub_availability_impact: row.get(25)?,
+						safety: row.get(26)?,
+						automatable: row.get(27)?,
+						provider_urgency: row.get(28)?,
+						recovery: row.get(29)?,
+						value_density: row.get(30)?,
+						vulnerability_response_effort: row.get(31)?,
+						version: "4".to_string(),
+						base_score: 0.0,
+						base_severity: "".to_string(),
+						vector_string: "".to_string(),
+					})
+				})?
+				.collect::<Result<Vec<CvssDataV40>, _>>()?;
+				if args.verbose {
+					println!("Found {} CVSS 4.0 CVEs.", tmp_cves.len());
+				}
+				cves.extend(tmp_cves);
+			}
+
+			if cves.len() < min_results_to_get_more {
+				// ROUND 6.2: Progeny CWEs of View 1000 CVSS 3.1 and 3.0 scores
+				for child in &child_cwes {
+					let tmp_cves: Vec<CvssDataV40> = stmt
+					.query_map(params![3, child], |row| {
+						Ok(CvssDataV40 {
+							attack_vector: row.get(0)?,
+							attack_complexity: row.get(1)?,
+							attack_requirements: row.get(2)?,
+							privileges_required: row.get(3)?,
+							user_interaction: row.get(4)?,
+							vuln_confidentiality_impact: row.get(5)?,
+							vuln_integrity_impact: row.get(6)?,
+							vuln_availability_impact: row.get(7)?,
+							sub_confidentiality_impact: row.get(8)?,
+							sub_integrity_impact: row.get(9)?,
+							sub_availability_impact: row.get(10)?,
+							exploit_maturity: row.get(11)?,
+							confidentiality_requirement: row.get(12)?,
+							integrity_requirement: row.get(13)?,
+							availability_requirement: row.get(14)?,
+							modified_attack_vector: row.get(15)?,
+							modified_attack_complexity: row.get(16)?,
+							modified_attack_requirements: row.get(17)?,
+							modified_privileges_required: row.get(18)?,
+							modified_user_interaction: row.get(19)?,
+							modified_vuln_confidentiality_impact: row.get(20)?,
+							modified_vuln_integrity_impact: row.get(21)?,
+							modified_vuln_availability_impact: row.get(22)?,
+							modified_sub_confidentiality_impact: row.get(23)?,
+							modified_sub_integrity_impact: row.get(24)?,
+							modified_sub_availability_impact: row.get(25)?,
+							safety: row.get(26)?,
+							automatable: row.get(27)?,
+							provider_urgency: row.get(28)?,
+							recovery: row.get(29)?,
+							value_density: row.get(30)?,
+							vulnerability_response_effort: row.get(31)?,
+							version: "3".to_string(),
+							base_score: 0.0,
+							base_severity: "".to_string(),
+							vector_string: "".to_string(),
+						})
+					})?
+					.collect::<Result<Vec<CvssDataV40>, _>>()?;
+					if args.verbose {
+						println!("Found {} CVSS 3.0 and 3.1 CVEs.", tmp_cves.len());
+					}
+					cves.extend(tmp_cves);
+				}
+			}
+
+			if cves.len() < min_results_to_get_more {
+				// ROUND 6.3: Progeny CWEs of View 1000 CVSS 2 scores
+				for child in child_cwes {
+					let tmp_cves: Vec<CvssDataV40> = stmt
+					.query_map(params![2, child], |row| {
+						Ok(CvssDataV40 {
+							attack_vector: row.get(0)?,
+							attack_complexity: row.get(1)?,
+							attack_requirements: row.get(2)?,
+							privileges_required: row.get(3)?,
+							user_interaction: row.get(4)?,
+							vuln_confidentiality_impact: row.get(5)?,
+							vuln_integrity_impact: row.get(6)?,
+							vuln_availability_impact: row.get(7)?,
+							sub_confidentiality_impact: row.get(8)?,
+							sub_integrity_impact: row.get(9)?,
+							sub_availability_impact: row.get(10)?,
+							exploit_maturity: row.get(11)?,
+							confidentiality_requirement: row.get(12)?,
+							integrity_requirement: row.get(13)?,
+							availability_requirement: row.get(14)?,
+							modified_attack_vector: row.get(15)?,
+							modified_attack_complexity: row.get(16)?,
+							modified_attack_requirements: row.get(17)?,
+							modified_privileges_required: row.get(18)?,
+							modified_user_interaction: row.get(19)?,
+							modified_vuln_confidentiality_impact: row.get(20)?,
+							modified_vuln_integrity_impact: row.get(21)?,
+							modified_vuln_availability_impact: row.get(22)?,
+							modified_sub_confidentiality_impact: row.get(23)?,
+							modified_sub_integrity_impact: row.get(24)?,
+							modified_sub_availability_impact: row.get(25)?,
+							safety: row.get(26)?,
+							automatable: row.get(27)?,
+							provider_urgency: row.get(28)?,
+							recovery: row.get(29)?,
+							value_density: row.get(30)?,
+							vulnerability_response_effort: row.get(31)?,
+							version: "2".to_string(),
+							base_score: 0.0,
+							base_severity: "".to_string(),
+							vector_string: "".to_string(),
+						})
+					})?
+					.collect::<Result<Vec<CvssDataV40>, _>>()?;
+					if args.verbose {
+						println!("Found {} CVSS 2 CVEs.", tmp_cves.len());
+					}
+					cves.extend(tmp_cves);
+				}
+			}
+		}
+	}
+
+	let mut stmt3 = conn.prepare("SELECT target_id FROM WeaknessRelationship WHERE source_id = ?1 AND view_id = ?2")?;
+	let mut processed_cwes_temp: Vec<u32> = Vec::new();
+
+	let mut parent_cwes: Vec<u32> = Vec::new();
+
+	// ROUND 7: Parent CWEs of View 1000
+	if args.verbose {
+		println!("Starting Round 7 Scoring.");
+	}
+	if cves.len() < min_results_to_score {
+		parent_cwes.extend(stmt3.query_map(params![cwe_num_id, 1000], |row| {
+			row.get(0)
+		})?
+		.collect::<Result<Vec<u32>, _>>()?);
+
+		// ROUND 7.1: Parent CWEs of View 1000 CVSS 4.0 scores
+		processed_cwes_temp.extend(parent_cwes.clone());
+
+		for parent in &parent_cwes {
+			if processed_cwes.contains(parent) {
+				continue;
+			}
+
+			let tmp_cves: Vec<CvssDataV40> = stmt
+			.query_map(params![4, parent], |row| {
+				Ok(CvssDataV40 {
+					attack_vector: row.get(0)?,
+					attack_complexity: row.get(1)?,
+					attack_requirements: row.get(2)?,
+					privileges_required: row.get(3)?,
+					user_interaction: row.get(4)?,
+					vuln_confidentiality_impact: row.get(5)?,
+					vuln_integrity_impact: row.get(6)?,
+					vuln_availability_impact: row.get(7)?,
+					sub_confidentiality_impact: row.get(8)?,
+					sub_integrity_impact: row.get(9)?,
+					sub_availability_impact: row.get(10)?,
+					exploit_maturity: row.get(11)?,
+					confidentiality_requirement: row.get(12)?,
+					integrity_requirement: row.get(13)?,
+					availability_requirement: row.get(14)?,
+					modified_attack_vector: row.get(15)?,
+					modified_attack_complexity: row.get(16)?,
+					modified_attack_requirements: row.get(17)?,
+					modified_privileges_required: row.get(18)?,
+					modified_user_interaction: row.get(19)?,
+					modified_vuln_confidentiality_impact: row.get(20)?,
+					modified_vuln_integrity_impact: row.get(21)?,
+					modified_vuln_availability_impact: row.get(22)?,
+					modified_sub_confidentiality_impact: row.get(23)?,
+					modified_sub_integrity_impact: row.get(24)?,
+					modified_sub_availability_impact: row.get(25)?,
+					safety: row.get(26)?,
+					automatable: row.get(27)?,
+					provider_urgency: row.get(28)?,
+					recovery: row.get(29)?,
+					value_density: row.get(30)?,
+					vulnerability_response_effort: row.get(31)?,
+					version: "4".to_string(),
+					base_score: 0.0,
+					base_severity: "".to_string(),
+					vector_string: "".to_string(),
+				})
+			})?
+			.collect::<Result<Vec<CvssDataV40>, _>>()?;
+			if args.verbose {
+				println!("Found {} CVSS 4.0 CVEs.", tmp_cves.len());
+			}
+			cves.extend(tmp_cves);
+		}
+
+		if cves.len() < min_results_to_get_more {
+			// ROUND 7.2: Parent CWEs of View 1000 CVSS 3.1 and 3.0 scores
+			for parent in &parent_cwes {
+				let tmp_cves: Vec<CvssDataV40> = stmt
+				.query_map(params![3, parent], |row| {
+					Ok(CvssDataV40 {
+						attack_vector: row.get(0)?,
+						attack_complexity: row.get(1)?,
+						attack_requirements: row.get(2)?,
+						privileges_required: row.get(3)?,
+						user_interaction: row.get(4)?,
+						vuln_confidentiality_impact: row.get(5)?,
+						vuln_integrity_impact: row.get(6)?,
+						vuln_availability_impact: row.get(7)?,
+						sub_confidentiality_impact: row.get(8)?,
+						sub_integrity_impact: row.get(9)?,
+						sub_availability_impact: row.get(10)?,
+						exploit_maturity: row.get(11)?,
+						confidentiality_requirement: row.get(12)?,
+						integrity_requirement: row.get(13)?,
+						availability_requirement: row.get(14)?,
+						modified_attack_vector: row.get(15)?,
+						modified_attack_complexity: row.get(16)?,
+						modified_attack_requirements: row.get(17)?,
+						modified_privileges_required: row.get(18)?,
+						modified_user_interaction: row.get(19)?,
+						modified_vuln_confidentiality_impact: row.get(20)?,
+						modified_vuln_integrity_impact: row.get(21)?,
+						modified_vuln_availability_impact: row.get(22)?,
+						modified_sub_confidentiality_impact: row.get(23)?,
+						modified_sub_integrity_impact: row.get(24)?,
+						modified_sub_availability_impact: row.get(25)?,
+						safety: row.get(26)?,
+						automatable: row.get(27)?,
+						provider_urgency: row.get(28)?,
+						recovery: row.get(29)?,
+						value_density: row.get(30)?,
+						vulnerability_response_effort: row.get(31)?,
+						version: "3".to_string(),
+						base_score: 0.0,
+						base_severity: "".to_string(),
+						vector_string: "".to_string(),
+					})
+				})?
+				.collect::<Result<Vec<CvssDataV40>, _>>()?;
+				if args.verbose {
+					println!("Found {} CVSS 3.0 and 3.1 CVEs.", tmp_cves.len());
+				}
+				cves.extend(tmp_cves);
+			}
+		}
+
+		if cves.len() < min_results_to_get_more {
+			// ROUND 7.3: Parent CWEs of View 1000 CVSS 2 scores
+			for parent in &parent_cwes {
+				let tmp_cves: Vec<CvssDataV40> = stmt
+				.query_map(params![2, parent], |row| {
+					Ok(CvssDataV40 {
+						attack_vector: row.get(0)?,
+						attack_complexity: row.get(1)?,
+						attack_requirements: row.get(2)?,
+						privileges_required: row.get(3)?,
+						user_interaction: row.get(4)?,
+						vuln_confidentiality_impact: row.get(5)?,
+						vuln_integrity_impact: row.get(6)?,
+						vuln_availability_impact: row.get(7)?,
+						sub_confidentiality_impact: row.get(8)?,
+						sub_integrity_impact: row.get(9)?,
+						sub_availability_impact: row.get(10)?,
+						exploit_maturity: row.get(11)?,
+						confidentiality_requirement: row.get(12)?,
+						integrity_requirement: row.get(13)?,
+						availability_requirement: row.get(14)?,
+						modified_attack_vector: row.get(15)?,
+						modified_attack_complexity: row.get(16)?,
+						modified_attack_requirements: row.get(17)?,
+						modified_privileges_required: row.get(18)?,
+						modified_user_interaction: row.get(19)?,
+						modified_vuln_confidentiality_impact: row.get(20)?,
+						modified_vuln_integrity_impact: row.get(21)?,
+						modified_vuln_availability_impact: row.get(22)?,
+						modified_sub_confidentiality_impact: row.get(23)?,
+						modified_sub_integrity_impact: row.get(24)?,
+						modified_sub_availability_impact: row.get(25)?,
+						safety: row.get(26)?,
+						automatable: row.get(27)?,
+						provider_urgency: row.get(28)?,
+						recovery: row.get(29)?,
+						value_density: row.get(30)?,
+						vulnerability_response_effort: row.get(31)?,
+						version: "2".to_string(),
+						base_score: 0.0,
+						base_severity: "".to_string(),
+						vector_string: "".to_string(),
+					})
+				})?
+				.collect::<Result<Vec<CvssDataV40>, _>>()?;
+				if args.verbose {
+					println!("Found {} CVSS 2 CVEs.", tmp_cves.len());
+				}
+				cves.extend(tmp_cves);
+			}
+		}
+		processed_cwes.extend(processed_cwes_temp.clone());
+	}
+
+	// ROUND 8: Sibling CWEs of View 1000
+	let mut stmt4 = conn.prepare("SELECT source_id FROM WeaknessRelationship WHERE target_id IN (SELECT target_id FROM WeaknessRelationship WHERE source_id = ?1 AND view_id = ?2) AND view_id = ?2")?;
+	
+	if args.verbose {
+		println!("Starting Round 8 Scoring.");
+	}
+	if cves.len() < min_results_to_score {
+		let sibling_cwes: Vec<u32> = stmt4.query_map(params![cwe_num_id, 1000], |row| {
+			row.get(0)
+		})?
+		.collect::<Result<Vec<u32>, _>>()?;
+
+		// ROUND 8.1: Sibling CWEs of View 1000 CVSS 4.0 scores
+		for sibling in &sibling_cwes {
+			if processed_cwes.contains(sibling) {
+				continue;
+			}
+			processed_cwes.push(*sibling);
+
+			let tmp_cves: Vec<CvssDataV40> = stmt
+			.query_map(params![4, sibling], |row| {
+				Ok(CvssDataV40 {
+					attack_vector: row.get(0)?,
+					attack_complexity: row.get(1)?,
+					attack_requirements: row.get(2)?,
+					privileges_required: row.get(3)?,
+					user_interaction: row.get(4)?,
+					vuln_confidentiality_impact: row.get(5)?,
+					vuln_integrity_impact: row.get(6)?,
+					vuln_availability_impact: row.get(7)?,
+					sub_confidentiality_impact: row.get(8)?,
+					sub_integrity_impact: row.get(9)?,
+					sub_availability_impact: row.get(10)?,
+					exploit_maturity: row.get(11)?,
+					confidentiality_requirement: row.get(12)?,
+					integrity_requirement: row.get(13)?,
+					availability_requirement: row.get(14)?,
+					modified_attack_vector: row.get(15)?,
+					modified_attack_complexity: row.get(16)?,
+					modified_attack_requirements: row.get(17)?,
+					modified_privileges_required: row.get(18)?,
+					modified_user_interaction: row.get(19)?,
+					modified_vuln_confidentiality_impact: row.get(20)?,
+					modified_vuln_integrity_impact: row.get(21)?,
+					modified_vuln_availability_impact: row.get(22)?,
+					modified_sub_confidentiality_impact: row.get(23)?,
+					modified_sub_integrity_impact: row.get(24)?,
+					modified_sub_availability_impact: row.get(25)?,
+					safety: row.get(26)?,
+					automatable: row.get(27)?,
+					provider_urgency: row.get(28)?,
+					recovery: row.get(29)?,
+					value_density: row.get(30)?,
+					vulnerability_response_effort: row.get(31)?,
+					version: "4".to_string(),
+					base_score: 0.0,
+					base_severity: "".to_string(),
+					vector_string: "".to_string(),
+				})
+			})?
+			.collect::<Result<Vec<CvssDataV40>, _>>()?;
+			if args.verbose {
+				println!("Found {} CVSS 4.0 CVEs.", tmp_cves.len());
+			}
+			cves.extend(tmp_cves);
+		}
+
+		if cves.len() < min_results_to_get_more {
+			// ROUND 8.2: Sibling CWEs of View 1000 CVSS 3.1 and 3.0 scores
+			for sibling in &sibling_cwes {
+				let tmp_cves: Vec<CvssDataV40> = stmt
+				.query_map(params![3, sibling], |row| {
+					Ok(CvssDataV40 {
+						attack_vector: row.get(0)?,
+						attack_complexity: row.get(1)?,
+						attack_requirements: row.get(2)?,
+						privileges_required: row.get(3)?,
+						user_interaction: row.get(4)?,
+						vuln_confidentiality_impact: row.get(5)?,
+						vuln_integrity_impact: row.get(6)?,
+						vuln_availability_impact: row.get(7)?,
+						sub_confidentiality_impact: row.get(8)?,
+						sub_integrity_impact: row.get(9)?,
+						sub_availability_impact: row.get(10)?,
+						exploit_maturity: row.get(11)?,
+						confidentiality_requirement: row.get(12)?,
+						integrity_requirement: row.get(13)?,
+						availability_requirement: row.get(14)?,
+						modified_attack_vector: row.get(15)?,
+						modified_attack_complexity: row.get(16)?,
+						modified_attack_requirements: row.get(17)?,
+						modified_privileges_required: row.get(18)?,
+						modified_user_interaction: row.get(19)?,
+						modified_vuln_confidentiality_impact: row.get(20)?,
+						modified_vuln_integrity_impact: row.get(21)?,
+						modified_vuln_availability_impact: row.get(22)?,
+						modified_sub_confidentiality_impact: row.get(23)?,
+						modified_sub_integrity_impact: row.get(24)?,
+						modified_sub_availability_impact: row.get(25)?,
+						safety: row.get(26)?,
+						automatable: row.get(27)?,
+						provider_urgency: row.get(28)?,
+						recovery: row.get(29)?,
+						value_density: row.get(30)?,
+						vulnerability_response_effort: row.get(31)?,
+						version: "3".to_string(),
+						base_score: 0.0,
+						base_severity: "".to_string(),
+						vector_string: "".to_string(),
+					})
+				})?
+				.collect::<Result<Vec<CvssDataV40>, _>>()?;
+				if args.verbose {
+					println!("Found {} CVSS 3.0 and 3.1 CVEs.", tmp_cves.len());
+				}
+				cves.extend(tmp_cves);
+			}
+		}
+
+		if cves.len() < min_results_to_get_more {
+			// ROUND 8.3: Sibling CWEs of View 1000 CVSS 2 scores
+			for sibling in sibling_cwes {
+				let tmp_cves: Vec<CvssDataV40> = stmt
+				.query_map(params![2, sibling], |row| {
+					Ok(CvssDataV40 {
+						attack_vector: row.get(0)?,
+						attack_complexity: row.get(1)?,
+						attack_requirements: row.get(2)?,
+						privileges_required: row.get(3)?,
+						user_interaction: row.get(4)?,
+						vuln_confidentiality_impact: row.get(5)?,
+						vuln_integrity_impact: row.get(6)?,
+						vuln_availability_impact: row.get(7)?,
+						sub_confidentiality_impact: row.get(8)?,
+						sub_integrity_impact: row.get(9)?,
+						sub_availability_impact: row.get(10)?,
+						exploit_maturity: row.get(11)?,
+						confidentiality_requirement: row.get(12)?,
+						integrity_requirement: row.get(13)?,
+						availability_requirement: row.get(14)?,
+						modified_attack_vector: row.get(15)?,
+						modified_attack_complexity: row.get(16)?,
+						modified_attack_requirements: row.get(17)?,
+						modified_privileges_required: row.get(18)?,
+						modified_user_interaction: row.get(19)?,
+						modified_vuln_confidentiality_impact: row.get(20)?,
+						modified_vuln_integrity_impact: row.get(21)?,
+						modified_vuln_availability_impact: row.get(22)?,
+						modified_sub_confidentiality_impact: row.get(23)?,
+						modified_sub_integrity_impact: row.get(24)?,
+						modified_sub_availability_impact: row.get(25)?,
+						safety: row.get(26)?,
+						automatable: row.get(27)?,
+						provider_urgency: row.get(28)?,
+						recovery: row.get(29)?,
+						value_density: row.get(30)?,
+						vulnerability_response_effort: row.get(31)?,
+						version: "2".to_string(),
+						base_score: 0.0,
+						base_severity: "".to_string(),
+						vector_string: "".to_string(),
+					})
+				})?
+				.collect::<Result<Vec<CvssDataV40>, _>>()?;
+				if args.verbose {
+					println!("Found {} CVSS 2 CVEs.", tmp_cves.len());
+				}
+				cves.extend(tmp_cves);
+			}
+		}
+	}
+
+	// ROUNDS 9 AND 10: Grandparent and Cousin CWEs of View 1000
+	if args.verbose {
+		println!("Starting Rounds 9 and 10 Scoring.");
+	}
+
+	if cves.len() < min_results_to_score {
+		let mut parent_cwes_tmp = parent_cwes.clone();
+
+		while parent_cwes_tmp.len() > 0 {
+			let mut grandparent_cwes_to_process: Vec<u32> = Vec::new();
+
+			for parent in &parent_cwes_tmp {
+				grandparent_cwes_to_process.extend(stmt3.query_map(params![parent, 1000], |row| {
+					row.get(0)
+				})?
+				.collect::<Result<Vec<u32>, _>>()?);
+				
+				//ROUND 9 - ancestor's CVEs
+				for grandparent in &grandparent_cwes_to_process {
+					// ROUND 9.1: Ancestor CWEs of View 1000 CVSS 4.0 scores
+					let tmp_cves: Vec<CvssDataV40> = stmt.query_map(params![4, grandparent], |row| {
+						Ok(CvssDataV40 {
+							attack_vector: row.get(0)?,
+							attack_complexity: row.get(1)?,
+							attack_requirements: row.get(2)?,
+							privileges_required: row.get(3)?,
+							user_interaction: row.get(4)?,
+							vuln_confidentiality_impact: row.get(5)?,
+							vuln_integrity_impact: row.get(6)?,
+							vuln_availability_impact: row.get(7)?,
+							sub_confidentiality_impact: row.get(8)?,
+							sub_integrity_impact: row.get(9)?,
+							sub_availability_impact: row.get(10)?,
+							exploit_maturity: row.get(11)?,
+							confidentiality_requirement: row.get(12)?,
+							integrity_requirement: row.get(13)?,
+							availability_requirement: row.get(14)?,
+							modified_attack_vector: row.get(15)?,
+							modified_attack_complexity: row.get(16)?,
+							modified_attack_requirements: row.get(17)?,
+							modified_privileges_required: row.get(18)?,
+							modified_user_interaction: row.get(19)?,
+							modified_vuln_confidentiality_impact: row.get(20)?,
+							modified_vuln_integrity_impact: row.get(21)?,
+							modified_vuln_availability_impact: row.get(22)?,
+							modified_sub_confidentiality_impact: row.get(23)?,
+							modified_sub_integrity_impact: row.get(24)?,
+							modified_sub_availability_impact: row.get(25)?,
+							safety: row.get(26)?,
+							automatable: row.get(27)?,
+							provider_urgency: row.get(28)?,
+							recovery: row.get(29)?,
+							value_density: row.get(30)?,
+							vulnerability_response_effort: row.get(31)?,
+							version: "4".to_string(),
+							base_score: 0.0,
+							base_severity: "".to_string(),
+							vector_string: "".to_string(),
+						})
+					})?
+					.collect::<Result<Vec<CvssDataV40>, _>>()?;
+					if args.verbose {
+						println!("Found {} CVSS 4.0 CVEs.", tmp_cves.len());
+					}
+					cves.extend(tmp_cves);
+
+					if cves.len() < min_results_to_get_more {
+						// ROUND 9.2: Ancestor CWEs of View 1000 CVSS 3.1 and 3.0 scores
+						let tmp_cves: Vec<CvssDataV40> = stmt.query_map(params![3, grandparent], |row| {
+							Ok(CvssDataV40 {
+								attack_vector: row.get(0)?,
+								attack_complexity: row.get(1)?,
+								attack_requirements: row.get(2)?,
+								privileges_required: row.get(3)?,
+								user_interaction: row.get(4)?,
+								vuln_confidentiality_impact: row.get(5)?,
+								vuln_integrity_impact: row.get(6)?,
+								vuln_availability_impact: row.get(7)?,
+								sub_confidentiality_impact: row.get(8)?,
+								sub_integrity_impact: row.get(9)?,
+								sub_availability_impact: row.get(10)?,
+								exploit_maturity: row.get(11)?,
+								confidentiality_requirement: row.get(12)?,
+								integrity_requirement: row.get(13)?,
+								availability_requirement: row.get(14)?,
+								modified_attack_vector: row.get(15)?,
+								modified_attack_complexity: row.get(16)?,
+								modified_attack_requirements: row.get(17)?,
+								modified_privileges_required: row.get(18)?,
+								modified_user_interaction: row.get(19)?,
+								modified_vuln_confidentiality_impact: row.get(20)?,
+								modified_vuln_integrity_impact: row.get(21)?,
+								modified_vuln_availability_impact: row.get(22)?,
+								modified_sub_confidentiality_impact: row.get(23)?,
+								modified_sub_integrity_impact: row.get(24)?,
+								modified_sub_availability_impact: row.get(25)?,
+								safety: row.get(26)?,
+								automatable: row.get(27)?,
+								provider_urgency: row.get(28)?,
+								recovery: row.get(29)?,
+								value_density: row.get(30)?,
+								vulnerability_response_effort: row.get(31)?,
+								version: "3".to_string(),
+								base_score: 0.0,
+								base_severity: "".to_string(),
+								vector_string: "".to_string(),
+							})
+						})?
+						.collect::<Result<Vec<CvssDataV40>, _>>()?;
+						if args.verbose {
+							println!("Found {} CVSS 3.0 and 3.1 CVEs.", tmp_cves.len());
+						}
+						cves.extend(tmp_cves);
+					}
+
+					if cves.len() < min_results_to_get_more {
+						// ROUND 9.3: Parent CWEs of View 1000 CVSS 2 scores
+						let tmp_cves: Vec<CvssDataV40> = stmt.query_map(params![2, grandparent], |row| {
+							Ok(CvssDataV40 {
+								attack_vector: row.get(0)?,
+								attack_complexity: row.get(1)?,
+								attack_requirements: row.get(2)?,
+								privileges_required: row.get(3)?,
+								user_interaction: row.get(4)?,
+								vuln_confidentiality_impact: row.get(5)?,
+								vuln_integrity_impact: row.get(6)?,
+								vuln_availability_impact: row.get(7)?,
+								sub_confidentiality_impact: row.get(8)?,
+								sub_integrity_impact: row.get(9)?,
+								sub_availability_impact: row.get(10)?,
+								exploit_maturity: row.get(11)?,
+								confidentiality_requirement: row.get(12)?,
+								integrity_requirement: row.get(13)?,
+								availability_requirement: row.get(14)?,
+								modified_attack_vector: row.get(15)?,
+								modified_attack_complexity: row.get(16)?,
+								modified_attack_requirements: row.get(17)?,
+								modified_privileges_required: row.get(18)?,
+								modified_user_interaction: row.get(19)?,
+								modified_vuln_confidentiality_impact: row.get(20)?,
+								modified_vuln_integrity_impact: row.get(21)?,
+								modified_vuln_availability_impact: row.get(22)?,
+								modified_sub_confidentiality_impact: row.get(23)?,
+								modified_sub_integrity_impact: row.get(24)?,
+								modified_sub_availability_impact: row.get(25)?,
+								safety: row.get(26)?,
+								automatable: row.get(27)?,
+								provider_urgency: row.get(28)?,
+								recovery: row.get(29)?,
+								value_density: row.get(30)?,
+								vulnerability_response_effort: row.get(31)?,
+								version: "2".to_string(),
+								base_score: 0.0,
+								base_severity: "".to_string(),
+								vector_string: "".to_string(),
+							})
+						})?
+						.collect::<Result<Vec<CvssDataV40>, _>>()?;
+						if args.verbose {
+							println!("Found {} CVSS 2 CVEs.", tmp_cves.len());
+						}
+						cves.extend(tmp_cves);
+					}
+				}
+			}
+			
+			if cves.len() < min_results_to_score {
+				//ROUND 10 - Cousin CWEs
+				let mut cousin_cwes: Vec<u32> = Vec::new();
+				for ancestor in &parent_cwes_tmp {
+					cousin_cwes.extend(stmt4.query_map(params![ancestor, 1000], |row| {
+						row.get(0)
+					})?
+					.collect::<Result<Vec<u32>, _>>()?);
+				}
+
+				// ROUND 10.1: Cousin CWEs of View 1000 CVSS 4.0 scores
+				for cousin in &cousin_cwes {
+					if processed_cwes.contains(cousin) {
+						continue;
+					}
+					processed_cwes.push(*cousin);
+
+					let tmp_cves: Vec<CvssDataV40> = stmt
+					.query_map(params![4, cousin], |row| {
+						Ok(CvssDataV40 {
+							attack_vector: row.get(0)?,
+							attack_complexity: row.get(1)?,
+							attack_requirements: row.get(2)?,
+							privileges_required: row.get(3)?,
+							user_interaction: row.get(4)?,
+							vuln_confidentiality_impact: row.get(5)?,
+							vuln_integrity_impact: row.get(6)?,
+							vuln_availability_impact: row.get(7)?,
+							sub_confidentiality_impact: row.get(8)?,
+							sub_integrity_impact: row.get(9)?,
+							sub_availability_impact: row.get(10)?,
+							exploit_maturity: row.get(11)?,
+							confidentiality_requirement: row.get(12)?,
+							integrity_requirement: row.get(13)?,
+							availability_requirement: row.get(14)?,
+							modified_attack_vector: row.get(15)?,
+							modified_attack_complexity: row.get(16)?,
+							modified_attack_requirements: row.get(17)?,
+							modified_privileges_required: row.get(18)?,
+							modified_user_interaction: row.get(19)?,
+							modified_vuln_confidentiality_impact: row.get(20)?,
+							modified_vuln_integrity_impact: row.get(21)?,
+							modified_vuln_availability_impact: row.get(22)?,
+							modified_sub_confidentiality_impact: row.get(23)?,
+							modified_sub_integrity_impact: row.get(24)?,
+							modified_sub_availability_impact: row.get(25)?,
+							safety: row.get(26)?,
+							automatable: row.get(27)?,
+							provider_urgency: row.get(28)?,
+							recovery: row.get(29)?,
+							value_density: row.get(30)?,
+							vulnerability_response_effort: row.get(31)?,
+							version: "4".to_string(),
+							base_score: 0.0,
+							base_severity: "".to_string(),
+							vector_string: "".to_string(),
+						})
+					})?
+					.collect::<Result<Vec<CvssDataV40>, _>>()?;
+					if args.verbose {
+						println!("Found {} CVSS 4.0 CVEs.", tmp_cves.len());
+					}
+					cves.extend(tmp_cves);
+				}
+
+				if cves.len() < min_results_to_get_more {
+					// ROUND 10.2: Cousin CWEs of View 1000 CVSS 3.1 and 3.0 scores
+					for cousin in &cousin_cwes {
+						let tmp_cves: Vec<CvssDataV40> = stmt
+						.query_map(params![3, cousin], |row| {
+							Ok(CvssDataV40 {
+								attack_vector: row.get(0)?,
+								attack_complexity: row.get(1)?,
+								attack_requirements: row.get(2)?,
+								privileges_required: row.get(3)?,
+								user_interaction: row.get(4)?,
+								vuln_confidentiality_impact: row.get(5)?,
+								vuln_integrity_impact: row.get(6)?,
+								vuln_availability_impact: row.get(7)?,
+								sub_confidentiality_impact: row.get(8)?,
+								sub_integrity_impact: row.get(9)?,
+								sub_availability_impact: row.get(10)?,
+								exploit_maturity: row.get(11)?,
+								confidentiality_requirement: row.get(12)?,
+								integrity_requirement: row.get(13)?,
+								availability_requirement: row.get(14)?,
+								modified_attack_vector: row.get(15)?,
+								modified_attack_complexity: row.get(16)?,
+								modified_attack_requirements: row.get(17)?,
+								modified_privileges_required: row.get(18)?,
+								modified_user_interaction: row.get(19)?,
+								modified_vuln_confidentiality_impact: row.get(20)?,
+								modified_vuln_integrity_impact: row.get(21)?,
+								modified_vuln_availability_impact: row.get(22)?,
+								modified_sub_confidentiality_impact: row.get(23)?,
+								modified_sub_integrity_impact: row.get(24)?,
+								modified_sub_availability_impact: row.get(25)?,
+								safety: row.get(26)?,
+								automatable: row.get(27)?,
+								provider_urgency: row.get(28)?,
+								recovery: row.get(29)?,
+								value_density: row.get(30)?,
+								vulnerability_response_effort: row.get(31)?,
+								version: "3".to_string(),
+								base_score: 0.0,
+								base_severity: "".to_string(),
+								vector_string: "".to_string(),
+							})
+						})?
+						.collect::<Result<Vec<CvssDataV40>, _>>()?;
+						if args.verbose {
+							println!("Found {} CVSS 3.0 and 3.1 CVEs.", tmp_cves.len());
+						}
+						cves.extend(tmp_cves);
+					}
+				}
+
+				if cves.len() < min_results_to_get_more {
+					// ROUND 10.3: Cousin CWEs of View 1000 CVSS 2 scores
+					for cousin in cousin_cwes {
+						let tmp_cves: Vec<CvssDataV40> = stmt
+						.query_map(params![2, cousin], |row| {
+							Ok(CvssDataV40 {
+								attack_vector: row.get(0)?,
+								attack_complexity: row.get(1)?,
+								attack_requirements: row.get(2)?,
+								privileges_required: row.get(3)?,
+								user_interaction: row.get(4)?,
+								vuln_confidentiality_impact: row.get(5)?,
+								vuln_integrity_impact: row.get(6)?,
+								vuln_availability_impact: row.get(7)?,
+								sub_confidentiality_impact: row.get(8)?,
+								sub_integrity_impact: row.get(9)?,
+								sub_availability_impact: row.get(10)?,
+								exploit_maturity: row.get(11)?,
+								confidentiality_requirement: row.get(12)?,
+								integrity_requirement: row.get(13)?,
+								availability_requirement: row.get(14)?,
+								modified_attack_vector: row.get(15)?,
+								modified_attack_complexity: row.get(16)?,
+								modified_attack_requirements: row.get(17)?,
+								modified_privileges_required: row.get(18)?,
+								modified_user_interaction: row.get(19)?,
+								modified_vuln_confidentiality_impact: row.get(20)?,
+								modified_vuln_integrity_impact: row.get(21)?,
+								modified_vuln_availability_impact: row.get(22)?,
+								modified_sub_confidentiality_impact: row.get(23)?,
+								modified_sub_integrity_impact: row.get(24)?,
+								modified_sub_availability_impact: row.get(25)?,
+								safety: row.get(26)?,
+								automatable: row.get(27)?,
+								provider_urgency: row.get(28)?,
+								recovery: row.get(29)?,
+								value_density: row.get(30)?,
+								vulnerability_response_effort: row.get(31)?,
+								version: "2".to_string(),
+								base_score: 0.0,
+								base_severity: "".to_string(),
+								vector_string: "".to_string(),
+							})
+						})?
+						.collect::<Result<Vec<CvssDataV40>, _>>()?;
+						if args.verbose {
+							println!("Found {} CVSS 2 CVEs.", tmp_cves.len());
+						}
+						cves.extend(tmp_cves);
+					}
+				}
+			}
+
+			//clear out the parents that are processed
+			parent_cwes_tmp.clear();
+
+			if cves.len() < min_results_to_score {
+				//process the next generation
+				parent_cwes_tmp.extend(grandparent_cwes_to_process);
+			}
+		}
+	}
+
+	if cves.len() < min_results_to_score {
+		if args.verbose{
 			println!("Unable to score with fewer than 5 CVEs.");
 		}
 		else {
