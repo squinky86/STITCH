@@ -20,6 +20,7 @@ pub fn create_database(db_path: &str) -> Result<Connection> {
 		"CREATE TABLE IF NOT EXISTS Weakness (
 id INTEGER NOT NULL UNIQUE PRIMARY KEY,
 name TEXT NOT NULL,
+abstraction TEXT NOT NULL,
 description TEXT NOT NULL DEFAULT '',
 extended_description TEXT NOT NULL DEFAULT '',
 category BOOLEAN NOT NULL DEFAULT 0 CHECK(category IN (0, 1)),

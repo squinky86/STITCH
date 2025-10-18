@@ -12,6 +12,7 @@ use indicatif::{ProgressBar,ProgressStyle};
 struct Weakness {
 	id: u32,
 	name: String,
+	abstraction: String,
 	description: String,
 	category: bool, // is a category?
 	view: bool,     // is a view?
@@ -62,6 +63,8 @@ async fn cwe_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 	let mut current_element = String::new();
 	let mut capture_text = false;
 
+	let mut has_other: bool = false;
+
 	loop {
 		match reader.read_event_into(&mut buf) {
 			Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e))=> {
@@ -85,6 +88,14 @@ async fn cwe_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 							let value = String::from_utf8_lossy(&attr.value);
 
 							match key.as_ref() {
+								"Abstraction" => {
+									weakness.abstraction = value.to_string();
+									if weakness.abstraction == "Class" {
+										weakness.confidentiality = true;
+										weakness.integrity = true;
+										weakness.availability = true;
+									}
+								}
 								"ID" => {
 									weakness.id = value.parse::<u32>().unwrap_or(0)
 								}
@@ -94,7 +105,7 @@ async fn cwe_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 						}
 						current_weakness = Some(weakness);
 					}
-					"Description" | "Extended_Description" | "Scope" => {
+					"Description" | "Extended_Description" | "Scope" | "Impact" => {
 						capture_text = true;
 						text_buffer.clear();
 					}
@@ -150,6 +161,7 @@ async fn cwe_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 								p(format!("Parsed: CWE-{}", weakness.id).as_str(), true);
 							}
 							cwe_entries.push(weakness);
+							has_other = false;
 						}
 					}
 					"Description" => {
@@ -171,11 +183,43 @@ async fn cwe_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 								"Confidentiality" => weakness.confidentiality = true,
 								"Integrity" => weakness.integrity = true,
 								"Availability" => weakness.availability = true,
+								"Access Control" => {
+									weakness.confidentiality = true;
+									weakness.integrity = true;
+								},
+								"Accountability" => weakness.integrity = true,
+								"Authentication" => {
+									weakness.confidentiality = true;
+									weakness.integrity = true;
+									weakness.availability = true;
+								},
+								"Authorization" => {
+									weakness.confidentiality = true;
+									weakness.integrity = true;
+									weakness.availability = true;
+								},
+								"Non-Repudiation" => weakness.integrity = true,
+								"Other" => has_other = true,
 								_ => {}
 							}
 						}
 						capture_text = false;
 					}
+					"Impact" => {
+						if let Some(weakness) = current_weakness.as_mut() {
+							if has_other {
+								match text_buffer.trim() {
+									"Varies by Context" => {
+										weakness.confidentiality = true;
+										weakness.integrity = true;
+										weakness.availability = true;
+									},
+									_ => {}
+								}
+							}
+						}
+						has_other = false;
+					},
 					_ => {}
 				}
 				current_element.clear();
@@ -209,8 +253,8 @@ fn cwe_insert_data_to_database(
 	{
 		let mut stmt = tx.prepare_cached(
 			"INSERT OR REPLACE INTO Weakness 
-             (id, name, description, extended_description, category, view, confidentiality, integrity, availability) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             (id, name, abstraction, description, extended_description, category, view, confidentiality, integrity, availability) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
 		)?;
 
 		for entry in entries {
@@ -220,6 +264,7 @@ fn cwe_insert_data_to_database(
 			stmt.execute(params![
 				entry.id,
 				entry.name,
+				entry.abstraction,
 				entry.description,
 				entry.extended_description,
 				entry.category,

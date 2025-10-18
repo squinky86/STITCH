@@ -7,6 +7,39 @@ use cvss::v4::Vector;
 use rusqlite::{params, Connection};
 use std::{str::FromStr, collections::HashMap};
 
+fn mean_impact(iter: impl Iterator<Item = String>, affects: bool) -> String {
+	if !affects {
+		return String::from("NONE");
+	}
+	let scores: Vec<u32> = iter
+        .map(|s| match s.as_str() {
+            "LOW" => 1,
+            "HIGH" => 3,
+            _ => 0,
+        })
+        .collect();
+
+    let score: u32 = scores.iter().sum();
+    
+    let count = scores.len();
+
+    // Handle the division by zero case for an empty iterator
+    if count == 0 {
+        return String::from("NONE");
+    }
+
+    let average = (score as f32) / (count as f32);
+	
+    if average < 0.33 {
+        return String::from("NONE");
+    }
+    else if average < 2.0 {
+        return String::from("LOW");
+    }
+
+    return String::from("HIGH");
+}
+
 /// Calculates the mode (most frequent value) of a sequence of items.
 fn mode(iter: impl Iterator<Item = String>, list: Vec<String>) -> String {
     // Step 0: Set the initial HashMaps
@@ -342,7 +375,7 @@ fn score_cwes(db_path: &str, args: &Args) -> Result<()> {
 	}).with_context(|| format!("Could not get CWEs from the database."))?;
 
 	if !args.verbose {
-		println!("CWE,Title,Vector,Score");
+		println!("CWE,Title,Abstraction,Vector,Score");
 	}
 
 	for cwe in cwes {
@@ -416,7 +449,8 @@ fn get_cve_data_by_weakness(
         providerUrgency,
         recovery,
         valueDensity,
-        vulnerabilityResponseEffort
+        vulnerabilityResponseEffort,
+		NVDId
     FROM Vulnerability 
     WHERE id IN (SELECT VulnerabilityId FROM MapVulnerabilityWeakness WHERE WeaknessId = ?2)
 		AND scoreVersion = ?1")?;
@@ -459,7 +493,7 @@ fn get_cve_data_by_weakness(
             version: format!("{}.0", score_version),
             base_score: 0.0,
             base_severity: "".to_string(),
-            vector_string: "".to_string(),
+            vector_string: row.get(32)?,
         })
     })?;
 
@@ -507,7 +541,7 @@ fn get_parent_cwes(
 
 /// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
 fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
-	let min_results_to_get_more = 250;
+	let min_results_to_get_more = 50;
 	let min_results_to_score = 5;
 
 	let cwe_num_id: u32 = cwe_id.to_uppercase().trim_start_matches("CWE-").parse()?;
@@ -517,8 +551,12 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
     let mut stmt_cwe = conn.prepare(
         "SELECT
 			name,
+			abstraction,
             category,
-			view
+			view,
+			confidentiality,
+			integrity,
+			availability
         FROM Weakness
         WHERE id = ?1",
     )?;
@@ -526,9 +564,13 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
     // Query the database for the CVE's metrics
     let cwe_data = stmt_cwe.query_row(params![cwe_num_id], |row| {
         Ok((
-            row.get::<_, String>(0)?, //name
-			row.get::<_, bool>(1)?, //category
-			row.get::<_, bool>(2)?, //view
+			row.get::<_, String>(0)?, //name
+            row.get::<_, String>(1)?, //abstraction
+			row.get::<_, bool>(2)?, //category
+			row.get::<_, bool>(3)?, //view
+			row.get::<_, bool>(4)?, //confidentiality
+			row.get::<_, bool>(5)?, //integrity
+			row.get::<_, bool>(6)?, //availability
         ))
     }).with_context(|| format!("Could not find CWE '{}' in the database.", cwe_id))?;
 
@@ -536,14 +578,14 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 		println!("Found CWE: {} {}", cwe_id, cwe_data.0);
 	}
 
-	if cwe_data.1 {
+	if cwe_data.2 {
 		if args.verbose {
 			println!("Categories cannot be scored.");
 		}
 		return Ok(());
 	}
 
-	if cwe_data.2 {
+	if cwe_data.3 {
 		if args.verbose {
 			println!("Views cannot be scored.");
 		}
@@ -551,11 +593,11 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 	}
 
 	if cwe_data.0.starts_with("DEPRECATED") {
-			if args.verbose {
-				println!("Deprecated CWEs cannot be scored.");
-			}
-			return Ok(());
+		if args.verbose {
+			println!("Deprecated CWEs cannot be scored.");
 		}
+		return Ok(());
+	}
 
 	// ROUND 1: Direct NVD Scores
 	if args.verbose {
@@ -773,13 +815,19 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 			println!("Unable to score with fewer than 5 CVEs.");
 		}
 		else {
-			println!("{},\"{}\",N/A,{:.1}", cwe_num_id, cwe_data.0, 0.0);
+			println!("{},\"{}\",{},N/A,{:.1}", cwe_num_id, cwe_data.0, cwe_data.1, 0.0);
 		}
 		return Ok(());
 	}
 
 	if args.verbose {
 		println!("Scoring with {} CVEs in memory.", cves.len());
+		// List CVEs used in scoring
+		let mut tmp_cves: Vec<String> = cves.iter().map(|c| c.vector_string.clone()).collect();
+		tmp_cves.sort();
+		for cve in &tmp_cves {
+			println!("CVE: {}", cve);
+		}
 	}
 	
 	let temp_cvss4 = CvssDataV40 {
@@ -788,12 +836,12 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 		attack_requirements: mode(cves.iter().map(|c| c.attack_requirements.clone()), vec!["NONE".to_string(), "PRESENT".to_string()]),
 		privileges_required: mode(cves.iter().map(|c| c.privileges_required.clone()), vec!["NONE".to_string(), "LOW".to_string(), "HIGH".to_string()]),
 		user_interaction: mode(cves.iter().map(|c| c.user_interaction.clone()), vec!["NONE".to_string(), "PASSIVE".to_string(), "ACTIVE".to_string()]),
-		vuln_confidentiality_impact: mode(cves.iter().map(|c| c.vuln_confidentiality_impact.clone()), vec!["HIGH".to_string(), "LOW".to_string(), "NONE".to_string()]),
-		vuln_integrity_impact: mode(cves.iter().map(|c| c.vuln_integrity_impact.clone()), vec!["HIGH".to_string(), "LOW".to_string(), "NONE".to_string()]),
-		vuln_availability_impact: mode(cves.iter().map(|c| c.vuln_availability_impact.clone()), vec!["HIGH".to_string(), "LOW".to_string(), "NONE".to_string()]),
-		sub_confidentiality_impact: mode(cves.iter().map(|c| c.sub_confidentiality_impact.clone()), vec!["HIGH".to_string(), "LOW".to_string(), "NONE".to_string()]),
-		sub_integrity_impact: mode(cves.iter().map(|c| c.sub_integrity_impact.clone()), vec!["HIGH".to_string(), "LOW".to_string(), "NONE".to_string()]),
-		sub_availability_impact: mode(cves.iter().map(|c| c.sub_availability_impact.clone()), vec!["HIGH".to_string(), "LOW".to_string(), "NONE".to_string()]),
+		vuln_confidentiality_impact: mean_impact(cves.iter().map(|c| c.vuln_confidentiality_impact.clone()), cwe_data.4),
+		vuln_integrity_impact: mean_impact(cves.iter().map(|c| c.vuln_integrity_impact.clone()), cwe_data.5),
+		vuln_availability_impact: mean_impact(cves.iter().map(|c| c.vuln_availability_impact.clone()), cwe_data.6),
+		sub_confidentiality_impact: mean_impact(cves.iter().map(|c| c.sub_confidentiality_impact.clone()), true),
+		sub_integrity_impact: mean_impact(cves.iter().map(|c| c.sub_integrity_impact.clone()), true),
+		sub_availability_impact: mean_impact(cves.iter().map(|c| c.sub_availability_impact.clone()), true),
 		exploit_maturity: "NOT_DEFINED".to_string(),
 		confidentiality_requirement: "NOT_DEFINED".to_string(),
 		integrity_requirement: "NOT_DEFINED".to_string(),
@@ -917,9 +965,10 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 
 	if args.verbose {
 		println!("Scoring VS: {}", vector_string);
+		println!("Abstraction: {}", cwe_data.1);
 	}
 	else {
-		print!("{},\"{}\",{},", cwe_num_id, cwe_data.0, vector_string);
+		print!("{},\"{}\",{},{},", cwe_num_id, cwe_data.0, cwe_data.1, vector_string);
 	}
 
 	score_from_vector(&vector_string, &args)?;

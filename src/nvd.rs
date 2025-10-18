@@ -599,11 +599,13 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 			let mut inserted: Vec<i32> = Vec::new();
 			if let Some(weaknesses) = &cve.weaknesses {
 				for weakness in weaknesses {
-					for description in weakness.description.iter().filter(|d| d.lang == "en" && d.value.starts_with("CWE-")) {
-						let tmp_weakness = description.value.trim_start_matches("CWE-").parse::<i32>().context(format!("Failed to parse CWE {}", description.value))?;
-						if !inserted.contains(&tmp_weakness) {
-							stmt2.execute(params![vuln_id, tmp_weakness],)?;
-							inserted.push(tmp_weakness);
+					if weakness.type_ == "Primary" {
+						for description in weakness.description.iter().filter(|d| d.lang == "en" && d.value.starts_with("CWE-")) {
+							let tmp_weakness = description.value.trim_start_matches("CWE-").parse::<i32>().context(format!("Failed to parse CWE {}", description.value))?;
+							if !inserted.contains(&tmp_weakness) {
+								stmt2.execute(params![vuln_id, tmp_weakness],)?;
+								inserted.push(tmp_weakness);
+							}
 						}
 					}
 				}
