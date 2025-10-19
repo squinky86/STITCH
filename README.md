@@ -1,8 +1,8 @@
-# RuskTeX
+# STITCH - Scoring Tool for Integrated Threat and Compliance Heuristics
 
-A Rust command-line tool that maps CWEs, CVEs, ASD STIG Rules, and RMF Controls
+STITCH, the Scoring Tool for Integrated Threat and Compliance Heuristics, is a Rust command-line tool that maps CWEs, CVEs, ASD STIG Rules, and RMF Controls to generate a CVSS version 4.0 score estimation.
 
-RuskTeX derives its name from an internal tool called "RiskTeX" which was used to generate LaTeX-formatted risk reports with previous CVSS versions.
+STITCH is derived from the Public Domain "JFAC Scoring Procedure," a scoring estimation program vetted by the Joint Federated Assurance Center (JFAC).
 
 ## Installation
 
@@ -13,7 +13,7 @@ RuskTeX derives its name from an internal tool called "RiskTeX" which was used t
 ### Build from source
 ```bash
 git clone <repository-url>
-cd RuskTeX
+cd STITCH
 cargo build --release
 ```
 
@@ -22,21 +22,23 @@ cargo build --release
 ### Basic usage
 ```bash
 # Build database with default settings
-./target/release/RuskTeX
+./target/release/stitch
 
 # Specify output file
-./target/release/RuskTeX --output my_cwe.db
+./target/release/stitch --output my_cwe.db
 
 # Verbose output
-./target/release/RuskTeX --verbose
+./target/release/stitch --verbose
 
 # Force re-download even if XML exists
-./target/release/RuskTeX --force
+./target/release/stitch --force
+
+# Score a specific CWE
+./target/release/stitch-score CWE-119
 ```
 
 ### Command-line options
 - `-o, --output <FILE>`: Output database file path (default: cwe_database.db)
-- `-f, --force`: Force download even if XML file exists
 - `-v, --verbose`: Enable verbose output
 - `-h, --help`: Show help information
 
@@ -69,6 +71,16 @@ WHERE r.source_id = '89' AND r.nature = 'ChildOf';
 - `anyhow` - Error handling
 - `zip` - Archive extraction
 - `tempfile` - Temporary file handling
+- `serde` - JSON, XML, and YAML mapping
+- `serde_yaml` - serde YAML interface
+- `serde_json` - serde JSON interface
+- `futures-util` - common containers
+- `regex` - regular expression handling
+- `chrono` - access system clock
+- `flate2` - file decompression
+- `indicatif` - progress bars
+- `once_cell` - lazy loading of values
+- `cvss` - CVSS 4.0 scoring
 
 ## Error Handling
 
@@ -92,4 +104,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-**Note**: This tool is not affiliated with MITRE Corporation. It simply provides a convenient way to work with their publicly available CWE data.
+**Note**: This tool is not affiliated with MITRE Corporation.

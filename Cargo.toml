@@ -1,5 +1,5 @@
 [package]
-name = "rusktex"
+name = "stitch"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
@@ -7,7 +7,7 @@ authors = ["Jon Hood <squinky86@gmail.com>"]
 description = "A command-line tool to build a SQLite database from CWE, NIST 800-53, and NVD data"
 readme = "README.md"
 license = "MIT"
-repository = "https://github.com/squinky86/RuskTeX"
+repository = "https://github.com/squinky86/STITCH"
 
 [lints.rust]
 unsafe_code = "forbid"

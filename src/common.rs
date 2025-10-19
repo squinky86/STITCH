@@ -12,7 +12,7 @@ use indicatif::{ProgressBar,ProgressStyle};
 #[command(author, version, about, long_about = None)]
 pub struct Args {
 	/// Output database file path
-	#[arg(short, long, default_value = "rusktex.db")]
+	#[arg(short, long, default_value = "stitch.db")]
 	pub output: String,
 
 	/// Verbose output
