@@ -163,8 +163,8 @@ struct Args {
     /// The CVSS vector string (e.g., "CVSS:4.0/AV:N/AC:L...") or a CVE ID (e.g., "CVE-2021-44228")
     input: String,
 
-    /// Path to the RuskTeX database file
-    #[arg(short, long, default_value = "rusktex.db")]
+    /// Path to the STITCH database file
+    #[arg(short, long, default_value = "stitch.db")]
     db: String,
 
 	/// Verbose output of how the scoring is done
