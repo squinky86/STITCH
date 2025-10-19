@@ -1,3 +1,5 @@
+#[doc = include_str!("../doc/scoring.md")]
+
 pub mod cci;
 pub mod common;
 pub mod cwe;

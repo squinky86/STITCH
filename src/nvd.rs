@@ -546,6 +546,10 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 									cvss_v4.sub_integrity_impact = "NONE".to_string();
 									cvss_v4.sub_availability_impact = "NONE".to_string();
 								}
+
+								if let Some(ui_required) = cvss_metric.user_interaction_required {
+									cvss_v4.user_interaction = if ui_required { "REQUIRED".to_string() } else { "NONE".to_string() };
+								}
 								break;
 							}
 						}
