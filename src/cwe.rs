@@ -90,11 +90,6 @@ async fn cwe_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 							match key.as_ref() {
 								"Abstraction" => {
 									weakness.abstraction = value.to_string();
-									if weakness.abstraction == "Class" {
-										weakness.confidentiality = true;
-										weakness.integrity = true;
-										weakness.availability = true;
-									}
 								}
 								"ID" => {
 									weakness.id = value.parse::<u32>().unwrap_or(0)
@@ -156,9 +151,15 @@ async fn cwe_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 				let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
 				match tag_name.as_str() {
 					"Weakness" | "Category" | "View" => {
-						if let Some(weakness) = current_weakness.take() {
+						if let Some(mut weakness) = current_weakness.take() {
 							if args.verbose {
 								p(format!("Parsed: CWE-{}", weakness.id).as_str(), true);
+							}
+							//If it is a class not mapped to any impact, assume it maps to all impacts.
+							if weakness.abstraction == "Class" && !weakness.confidentiality && !weakness.integrity && !weakness.availability {
+								weakness.confidentiality = true;
+								weakness.integrity = true;
+								weakness.availability = true;
 							}
 							cwe_entries.push(weakness);
 							has_other = false;
