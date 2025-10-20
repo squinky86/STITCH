@@ -30,9 +30,6 @@ cargo build --release
 # Verbose output
 ./target/release/stitch --verbose
 
-# Force re-download even if XML exists
-./target/release/stitch --force
-
 # Score a specific CWE
 ./target/release/stitch-score CWE-119
 ```
