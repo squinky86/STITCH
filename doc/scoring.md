@@ -99,9 +99,99 @@ The NVD also keeps up with the following attributes to aide in CVSS 4.0 scoring 
 | Obtain Other Privilege | SC, SI, SA: `LOW` (when Obtain All Privilege is not set) |
 | Obtain All/User/Other Privilege is NOT set | SC, SI, SA: `NONE` |
 
-### 4.2 Score Calculation
+### 4.2 Score Estimation
 
-todo
+Estimating a score is done by CWE. For a given CWE, the closest associated CVEs are grouped to find the score estimation. The method for finding the closest available CVEs and then using them to estimate the overall CWE score is described in this section.
+
+#### 4.2.1 Finding Associated CVEs
+
+Each round in this process is composed of varying steps. After each round, if at least five CVEs (defined as `MINIMUM_CVES_TO_SCORE = 5`) are associated with the CWEs, the results are calculated and the subsequent rounds are not performed. If there are not at least five unique CVEs after a round, the next round is performed. During a round, there are multiple steps. If after a step there are at least 50 CVEs (defined as `MINIMUM_CVES_TO_COMPLETE_ROUND = 50`) identified, the subsequent steps are not performed.
+
+##### 4.2.1.1 Round 1: Direct CVEs
+
+During Round 1, CVEs mapped directly to the requested CWE are used to determine the estimated score.
+
+##### 4.2.1.1.1 Round 1 Step 1: Direct CVEs with CVSS 4.0 Scores
+
+CVEs with a Primary NVD Score using CVSS 4.0 mapped to the CWE are obtained and added to the list of CVEs to use to score the CWE.
+
+##### 4.2.1.1.2 Round 1 Step 2: Direct CVEs with CVSS 3.0 or CVSS 3.1 Scores
+
+CVEs with a Primary NVD Score using CVSS 3.0 or 3.1 mapped to the CWE are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
+
+##### 4.2.1.1.3 Round 1 Step 3: Direct CVEs with CVSS 2.0 Scores
+
+CVEs with a Primary NVD Score using CVSS 2.0 mapped to the CWE are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
+
+### 4.2.1.2 Round 2: Progeny CVEs
+
+During Round 2, CVEs directly mapped to increasingly subsequent rounds of child CWEs using only children associated with the CWE-1000 View are collected. The children of the CWE under consideration proceed through the steps of Round 2. If there are not at least `MINIMUM_CVES_TO_SCORE` after a round, the next generation of progeny repeat Round 2. This progresses until all progeny are evaluated. As the CWE data may contain loops and to avoid counting CVEs multiple times, progeny that have already been traversed are removed from consideration for subsequent rounds. I.E., Round 2 is performed for child CWEs, then grandchild CWEs, then great-grandchild CWEs, etc. until all progeny generations of CWEs are exhausted.
+
+##### 4.2.1.2.1 Round 2 Step 1: Progeny CVEs with CVSS 4.0 Scores
+
+CVEs with a Primary NVD Score using CVSS 4.0 mapped to the CWE's progeny generation are obtained and added to the list of CVEs to use to score the CWE.
+
+##### 4.2.1.2.2 Round 2 Step 2: Progeny CVEs with CVSS 3.0 or CVSS 3.1 Scores
+
+CVEs with a Primary NVD Score using CVSS 3.0 or 3.1 mapped to the CWE's progeny generation are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
+
+##### 4.2.1.2.3 Round 2 Step 3: Progeny CVEs with CVSS 2.0 Scores
+
+CVEs with a Primary NVD Score using CVSS 2.0 mapped to the CWE's progeny generation are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
+
+### 4.2.1.3 Round 3: Ancestor CVEs
+
+During Round 3, CVEs directly mapped to the CWE's ancestor generations are evaluated. Note that Round 3 is only iterated for increasingly distant ancestor CWEs after the completion of Round 4 using only ancestors associated with the CWE-1000 View. The ancestors of the CWE under consideration proceed through the steps of Round 3.
+
+##### 4.2.1.3.1 Round 3 Step 1: Ancestor CVEs with CVSS 4.0 Scores
+
+CVEs with a Primary NVD Score using CVSS 4.0 mapped to the CWE's ancestor generation are obtained and added to the list of CVEs to use to score the CWE.
+
+##### 4.2.1.3.2 Round 3 Step 2: Ancestor CVEs with CVSS 3.0 or CVSS 3.1 Scores
+
+CVEs with a Primary NVD Score using CVSS 3.0 or 3.1 mapped to the CWE's ancestor generation are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
+
+##### 4.2.1.3.3 Round 3 Step 3: Ancestor CVEs with CVSS 2.0 Scores
+
+CVEs with a Primary NVD Score using CVSS 2.0 mapped to the CWE's ancestor generation are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
+
+### 4.2.1.4 Round 4: Cousin CVEs
+
+During Round 4, CVEs directly mapped to the CWE's ancestor generation's direct children are evaluated. The cousins of the CWE under consideration proceed through the steps of Round 4. If there are not at least `MINIMUM_CVES_TO_SCORE` after a round, the previous generation of ancestors repeat at Round 3. This progresses until all ancestors are evaluated. As the CWE data may contain loops and to avoid counting CVEs multiple times, ancestors and cousins that have already been traversed are removed from consideration for subsequent rounds. I.E., Round 3 is performed for parent CWEs, then Round 4 is performed for all siblings, then Round 3 is performed for all grandparent CWEs, then round 4 is performed for all first cousins, then great-grandparents and second cousins, etc. until all ancestor generations of CWEs are exhausted.
+
+##### 4.2.1.4.1 Round 4 Step 1: Cousin CVEs with CVSS 4.0 Scores
+
+CVEs with a Primary NVD Score using CVSS 4.0 mapped to the CWE's ancestor generation children (cousins) are obtained and added to the list of CVEs to use to score the CWE.
+
+##### 4.2.1.4.2 Round 4 Step 2: Cousin CVEs with CVSS 3.0 or CVSS 3.1 Scores
+
+CVEs with a Primary NVD Score using CVSS 3.0 or 3.1 mapped to the CWE's ancestor generation children (cousins) are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
+
+##### 4.2.1.4.3 Round 4 Step 3: Cousin CVEs with CVSS 2.0 Scores
+
+CVEs with a Primary NVD Score using CVSS 2.0 mapped to the CWE's ancestor generation children (cousins) are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
+
+# 4.2.2 Estimating the Score
+
+With the set of CVEs obtained from Section 4.2.1, the parameters for a new CVSS 4.0 score are set.
+
+* Attack Vector (AV) is set to the mode of Attack Vectors in the set of CVEs.
+* Attack Complexity (AC) is set to the mode of Attack Complexities in the set of CVEs.
+* Attack Requirements (AR) is set to the mode of Attack Requirements in the set of CVEs.
+* Privileges Required (PR) is set to the mode of Privileges Required in the set of CVEs.
+* User Interaction (UI) is set to the mode of User Interactions in the set of CVEs.
+* Confidentiality Impact to the Vulnerable System (VC) is set to the weighted mean of Confidentiality Impacts to the Vulnerable System in the set of CVEs. The weighted mean formula is defined in Section 4.2.2.1.
+* Integrity Impact to the Vulnerable System (VI) is set to the weighted mean of Integrity Impacts to the Vulnerable System in the set of CVEs.
+* Availability Impact to the Vulnerable System (VA) is set to the weighted mean of Availability Impacts to the Vulnerable System in the set of CVEs.
+* Confidentiality Impact to the Subsequent System (SC) is set to the weighted mean of Confidentiality Impacts to the Subsequent System in the set of CVEs.
+* Integrity Impact to the Subsequent System (SI) is set to the weighted mean of Integrity Impacts to the Subsequent System in the set of CVEs.
+* Availability Impact to the Subsequent System (SA) is set to the weighted mean of Availability Impacts to the Subsequent System in the set of CVEs.
+
+#### 4.2.2.1 Weighted Mean Calculation
+
+CVEs with an impact of `HIGH` are weighted with a value of 3. CVEs with an impact of `LOW` are weighted with a value of 1. CVEs with an impact of `NONE` are weighted with a value of 0. The weighted average is the sum of all values (v) divided by the total number of CVEs (n).
+
+$$\frac{\sum_{i=1}^{n} v_i}{n}$$
 
 ## Appendix A: References
 
