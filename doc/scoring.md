@@ -71,7 +71,11 @@ The CWE and CVE data are indexed from their respective data feed.
 
 ### 4.1.1 CWE Indexing
 
-Modifications to the CWE data are made such that CWEs, such as some Classes, with varying impacts are assumed to be able to impact all three factors of Confidentiality, Integrity, and Availability. All other CWE data is used as-is.
+Modifications to the CWE data are made such that CWEs, such as some Classes, with varying, `Other` impacts are assumed to be able to impact all three factors of Confidentiality, Integrity, and Availability. All other CWE data is used as-is. Additional impact rules to follow are:
+
+* CWEs that have an impact of `Authentication` or `Authorization` affect Confidentiality, Integrity, and Availability.
+* CWEs that affect `Access Control` affect Confidentiality and Integrity.
+* CWEs that affect `Non-Repudiation` affect Integrity.
 
 ### 4.1.2 CVE Indexing
 
@@ -206,11 +210,13 @@ With the set of CVEs obtained from Section 4.2.1, the parameters for a new CVSS 
 
 #### 4.2.2.1 Weighted Mean Calculation
 
-CVEs with an impact of `HIGH` are weighted with a value of 3. CVEs with an impact of `LOW` are weighted with a value of 1. CVEs with an impact of `NONE` are weighted with a value of 0. The weighted average is the sum of all values (v) divided by the total number of CVEs (n).
+CVEs with an impact of `HIGH` are weighted with a value of 3. CVEs with an impact of `LOW` are weighted with a value of 1. CVEs with an impact of `NONE` are weighted with a value of 0. The weighted average (w) is the sum of all values (v) divided by the total number of CVEs (n).
 
 $$
-\frac{\sum_{i=1}^{n} v_i}{n}
+w = \frac{\sum_{i=1}^{n} v_i}{n}
 $$
+
+When w is less than 0.33, the weighted mean is set to `NONE`. When w is 0.33 to 2.0, the weighted mean is set to `LOW`. When w is 2.0 or greater, the weighted mean is set to `HIGH`.
 
 ## 4.3 Supplemental Information
 
