@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Jon Hood
+// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+
 use stitch::{nvd::CvssDataV40};
 
 use anyhow::{Context, Result};

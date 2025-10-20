@@ -4,6 +4,17 @@
 | :------ | :--------- | :-------- | :-------------- |
 | 0.1.0   | 2025-10-19 | Jon Hood  | Initial Draft   |
 
+## Copyright and Licensing Information
+
+**Copyright © 2025 Jon Hood**
+
+The STITCH Score Estimation software is licensed under the MIT license. A copy of the `LICENSE` is distributed with the software.
+
+This documentation and process is licensed under the **Creative Commons Attribution 4.0 International License (CC BY 4.0)**.
+
+To view a copy of this license, visit:
+<[https://creativecommons.org/licenses/by/4.0/](https://creativecommons.org/licenses/by/4.0/)>
+
 ---
 
 ## 1.0 Purpose

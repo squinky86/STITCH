@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Jon Hood
+// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+
 use stitch::cci::process_cci;
 use stitch::common::Args;
 use stitch::cwe::process_cwe;
@@ -14,6 +17,7 @@ async fn main() -> Result<()> {
 	let args = Args::parse();
 
 	println!("STITCH Database Builder v0.1.0");
+	println!("CopyrightCopyright © 2025 Jon Hood")
 
 	// DB Structure
 	let conn = create_database(&args.output)?;
