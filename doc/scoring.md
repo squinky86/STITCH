@@ -48,15 +48,15 @@ ESS combines two sources of data to create its scoring estimations:
 * MITRE's CWEs
 * NVD's CVEs
 
-### 4.1 Indexing Data
+## 4.1 Indexing Data
 
 The CWE and CVE data are indexed from their respective data feed.
 
-#### 4.1.1 CWE Indexing
+### 4.1.1 CWE Indexing
 
 Modifications to the CWE data are made such that CWEs, such as some Classes, with varying impacts are assumed to be able to impact all three factors of Confidentiality, Integrity, and Availability. All other CWE data is used as-is.
 
-#### 4.1.2 CVE Indexing
+### 4.1.2 CVE Indexing
 
 Only the highest CVSS version of Primary NVD scores are preserved for each CVE. All scores are converted to CVSS Version 4.0.
 
@@ -99,15 +99,15 @@ The NVD also keeps up with the following attributes to aide in CVSS 4.0 scoring 
 | Obtain Other Privilege | SC, SI, SA: `LOW` (when Obtain All Privilege is not set) |
 | Obtain All/User/Other Privilege is NOT set | SC, SI, SA: `NONE` |
 
-### 4.2 Score Estimation
+## 4.2 Score Estimation
 
 Estimating a score is done by CWE. For a given CWE, the closest associated CVEs are grouped to find the score estimation. The method for finding the closest available CVEs and then using them to estimate the overall CWE score is described in this section.
 
-#### 4.2.1 Finding Associated CVEs
+### 4.2.1 Finding Associated CVEs
 
 Each round in this process is composed of varying steps. After each round, if at least five CVEs (defined as `MINIMUM_CVES_TO_SCORE = 5`) are associated with the CWEs, the results are calculated and the subsequent rounds are not performed. If there are not at least five unique CVEs after a round, the next round is performed. During a round, there are multiple steps. If after a step there are at least 50 CVEs (defined as `MINIMUM_CVES_TO_COMPLETE_ROUND = 50`) identified, the subsequent steps are not performed.
 
-##### 4.2.1.1 Round 1: Direct CVEs
+#### 4.2.1.1 Round 1: Direct CVEs
 
 During Round 1, CVEs mapped directly to the requested CWE are used to determine the estimated score.
 
@@ -123,7 +123,7 @@ CVEs with a Primary NVD Score using CVSS 3.0 or 3.1 mapped to the CWE are obtain
 
 CVEs with a Primary NVD Score using CVSS 2.0 mapped to the CWE are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
 
-### 4.2.1.2 Round 2: Progeny CVEs
+#### 4.2.1.2 Round 2: Progeny CVEs
 
 During Round 2, CVEs directly mapped to increasingly subsequent rounds of child CWEs using only children associated with the CWE-1000 View are collected. The children of the CWE under consideration proceed through the steps of Round 2. If there are not at least `MINIMUM_CVES_TO_SCORE` after a round, the next generation of progeny repeat Round 2. This progresses until all progeny are evaluated. As the CWE data may contain loops and to avoid counting CVEs multiple times, progeny that have already been traversed are removed from consideration for subsequent rounds. I.E., Round 2 is performed for child CWEs, then grandchild CWEs, then great-grandchild CWEs, etc. until all progeny generations of CWEs are exhausted.
 
@@ -139,7 +139,7 @@ CVEs with a Primary NVD Score using CVSS 3.0 or 3.1 mapped to the CWE's progeny 
 
 CVEs with a Primary NVD Score using CVSS 2.0 mapped to the CWE's progeny generation are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
 
-### 4.2.1.3 Round 3: Ancestor CVEs
+#### 4.2.1.3 Round 3: Ancestor CVEs
 
 During Round 3, CVEs directly mapped to the CWE's ancestor generations are evaluated. Note that Round 3 is only iterated for increasingly distant ancestor CWEs after the completion of Round 4 using only ancestors associated with the CWE-1000 View. The ancestors of the CWE under consideration proceed through the steps of Round 3.
 
@@ -155,7 +155,7 @@ CVEs with a Primary NVD Score using CVSS 3.0 or 3.1 mapped to the CWE's ancestor
 
 CVEs with a Primary NVD Score using CVSS 2.0 mapped to the CWE's ancestor generation are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
 
-### 4.2.1.4 Round 4: Cousin CVEs
+#### 4.2.1.4 Round 4: Cousin CVEs
 
 During Round 4, CVEs directly mapped to the CWE's ancestor generation's direct children are evaluated. The cousins of the CWE under consideration proceed through the steps of Round 4. If there are not at least `MINIMUM_CVES_TO_SCORE` after a round, the previous generation of ancestors repeat at Round 3. This progresses until all ancestors are evaluated. As the CWE data may contain loops and to avoid counting CVEs multiple times, ancestors and cousins that have already been traversed are removed from consideration for subsequent rounds. I.E., Round 3 is performed for parent CWEs, then Round 4 is performed for all siblings, then Round 3 is performed for all grandparent CWEs, then round 4 is performed for all first cousins, then great-grandparents and second cousins, etc. until all ancestor generations of CWEs are exhausted.
 
@@ -171,7 +171,7 @@ CVEs with a Primary NVD Score using CVSS 3.0 or 3.1 mapped to the CWE's ancestor
 
 CVEs with a Primary NVD Score using CVSS 2.0 mapped to the CWE's ancestor generation children (cousins) are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
 
-# 4.2.2 Estimating the Score
+### 4.2.2 Estimating the Score
 
 With the set of CVEs obtained from Section 4.2.1, the parameters for a new CVSS 4.0 score are set.
 
