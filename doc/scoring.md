@@ -113,7 +113,7 @@ The NVD also keeps up with the following attributes to aide in CVSS 4.0 scoring 
 | NVD CVSS 2.0 Score Attribute | CVSS 4.0 |
 | :--- | :--- |
 | User Interaction Required | User Interaction (UI) |
-| User Interaction Required true | UI: `REQUIRED` |
+| User Interaction Required true | UI: `ACTIVE` |
 | Obtain All Privilege, Obtain User Privilege, and Obtain Other Privilege | Subsystem C, I, and A (SC, SI, SA) |
 | Obtain All Privilege | SC, SI, SA: `HIGH` |
 | Obtain User Privilege | SC, SI, SA: `LOW` (when Obtain All Privilege is not set) |
