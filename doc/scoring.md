@@ -26,7 +26,9 @@ This standard does not apply to system-level attributes, operational environment
 | Term | Definition |
 | :--- | :--- |
 | **Analyst** | The individual responsible for reviewing a finding and applying the SSE framework |
+| **ASD** | Application Security and Development |
 | **AST** | Application Security Testing |
+| **CCI** | Control Correlation Identifier |
 | **CVE** | Common Vulnerabilities and Exposures |
 | **CVSS** | Common Vulnerability Scoring System |
 | **CWE** | Common Weakness Enumeration |
@@ -34,17 +36,21 @@ This standard does not apply to system-level attributes, operational environment
 | **Finding** | A potential weakness reported against a cybersecurity standard |
 | **FIRST** | Forum of Incident Response and Security Teams, Inc. |
 | **IAST** | Interactive AST |
+| **NIST** | National Institute of Standards and Technology |
 | **NVD** | National Vulnerability Database |
+| **RMF** | Risk Management Framework |
 | **SAST** | Static AST |
 | **SCA** | Software Composition Analysis |
 | **SSE** | STITCH Score Estimation |
+| **STIG** | Security Technical Implementation Guide |
+| **STIGWE** | STIG Weakness Enumerations |
 | **STITCH** | Scoring Tool for Integrated Threat and Compliance Heuristics |
 | **Vulnerability** | A weakness that has been confirmed to be exploitable and impacts the security of a system |
 | **Weakness** | A flaw or error in software design, code, or implementation that, if exploited, could lead to a security breach |
 
 ## 4.0 Scoring Methodology
 
-ESS combines two sources of data to create its scoring estimations:
+SSE combines two sources of data to create its scoring estimations:
 * MITRE's CWEs
 * NVD's CVEs
 
@@ -195,7 +201,20 @@ $$
 \frac{\sum_{i=1}^{n} v_i}{n}
 $$
 
+## 4.3 Supplemental Information
+
+STITCH includes associating scores against the Application Security and Development (ASD) Security Technical Implementation Guide (STIG) and Risk Management Framework (RMF) Control Correlation Identifiers (CCIs).
+
+* The latest ASD STIG is pulled from [https://public.cyber.mil/](https://public.cyber.mil/).
+* The latest RMF Control information is pulled from [https://csrc.nist.gov/](https://csrc.nist.gov/).
+* The latest CCI information is pulled from [https://public.cyber.mil/](https://public.cyber.mil/).
+* Associations between the ASD STIG and CWEs are obtained from the [STIGWE project](https://www.github.com/squinky86/STIGWE).
+
 ## Appendix A: References
 
-*   Forum of Incident Response and Security Teams, Inc. (FIRST). [CVSS Specification](https://www.first.org/cvss/v4.0/specification-document) V4.0.
+*  Forum of Incident Response and Security Teams, Inc. (FIRST). [CVSS Specification](https://www.first.org/cvss/v4.0/specification-document) V4.0.
+*  Hood, Jon. [STIG Weakness Enumerations (STIGWE)](https://www.github.com/squinky86/STIGWE).
 *  MITRE Corporation. [Common Weakness Enumeration (CWE)](https://cwe.mitre.org/) V4.18.
+*  National Institute of Standards and Technology (NIST). [National Vulnerability Database (NVD)](https://nvd.nist.gov/).
+*  National Institute of Standards and Technology. "Security and Privacy Controls for Information Systems and Organizations." Computer Security Resource Center, Special Publication 800-53, Revision 5, Update 1, U.S. Department of Commerce, 15 Sept. 2020, [https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final](https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final).
+*  U.S. Department of Defense. [DoD Cyber Exchange](https://public.cyber.mil/).
