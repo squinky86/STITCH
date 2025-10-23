@@ -92,7 +92,7 @@ When the highest Primary score is in CVSS version 3.0 or 3.1, the following conv
 
 | CVSS 3.0 or 3.1 | CVSS 4.0 |
 | :--- | :--- |
-| Attack Vector  (AV) | Access Vector (AV) |
+| Attack Vector (AV) | Access Vector (AV) |
 | AV: `ADJACENT_NETWORK` | AV: `ADJACENT` |
 | UI: `REQUIRED` | UI: `ACTIVE` |
 | S: `CHANGED` | SC, SI, SA: set to C, I, and A respectively |
@@ -102,7 +102,7 @@ When the highest primary score is in CVSS version 2.0, the following conversions
 
 | CVSS 2.0 | CVSS 4.0 |
 | :--- | :--- |
-| Attack Vector  (AV) | Access Vector (AV) |
+| Attack Vector (AV) | Access Vector (AV) |
 | AV: `ADJACENT_NETWORK` | AV: `ADJACENT` |
 | Access Complexity (AC) | Attack Complexity (AC) and Attack Requirements (AR) |
 | AC: `LOW` | AC: `LOW`, AR: `NONE` |
@@ -133,7 +133,7 @@ Estimating a score is done by CWE. For a given CWE, the closest associated CVEs 
 
 ### 4.2.1 Finding Associated CVEs
 
-Each round in this process is composed of varying steps. After each round, if at least five CVEs (defined as `MINIMUM_CVES_TO_SCORE = 5`) are associated with the CWEs, the results are calculated and the subsequent rounds are not performed. If there are not at least five unique CVEs after a round, the next round is performed. During a round, there are multiple steps. If after a step there are at least 50 CVEs (defined as `MINIMUM_CVES_TO_COMPLETE_ROUND = 50`) identified, the subsequent steps are not performed.
+Each round in this process is composed of varying steps. After each round, if at least five CVEs (defined as `MINIMUM_CVES_TO_SCORE = 5`) are associated with the CWEs, the results are calculated, and the subsequent rounds are not performed. If there are not at least five unique CVEs after a round, the next round is performed. During a round, there are multiple steps. If after a step there are at least 50 CVEs (defined as `MINIMUM_CVES_TO_COMPLETE_ROUND = 50`) identified, the subsequent steps are not performed.
 
 #### 4.2.1.1 Round 1: Direct CVEs
 
