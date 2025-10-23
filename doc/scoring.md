@@ -1,19 +1,26 @@
+> **UNCLASSIFIED**  
+> **DISTRIBUTION STATEMENT A: Approved for public release. Distribution is unlimited.**
+
 # STITCH Score Estimation
 
-| Version | Date       | Author(s) | Remarks         |
-| :------ | :--------- | :-------- | :-------------- |
-| 0.1.0   | 2025-10-19 | Jon Hood  | Initial Draft   |
+| Version | Date       | Author(s) | Remarks                |
+| :------ | :--------- | :-------- | :--------------------- |
+| 0.1.0   | 2025-10-19 | Jon Hood  | Initial Public Release |
 
-## Copyright and Licensing Information
+## Copyright, Acknowledgements, and Licensing Information
 
 **Copyright © 2025 Jon Hood**
 
 The STITCH Score Estimation software is licensed under the MIT license. A copy of the `LICENSE` is distributed with the software.
 
-This documentation and process is licensed under the **Creative Commons Attribution 4.0 International License (CC BY 4.0)**.
+This documentation and process are licensed under the **Creative Commons Attribution 4.0 International License (CC BY 4.0)**.
 
 To view a copy of this license, visit:
-<[https://creativecommons.org/licenses/by/4.0/](https://creativecommons.org/licenses/by/4.0/)>
+<[https://creativecommons.org/licenses/by/4.0/](https://creativecommons.org/licenses/by/4.0/)>.
+
+This process was developed, in whole or in part, under U.S. Government Contract No. ending in 24-F-B013 with the U.S. Army, DEVCOM AvMC. For the full contract number, please contact the author(s) of this process.
+
+Any opinions, findings, and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the U.S. Army or the Department of Defense.
 
 ---
 
@@ -108,7 +115,7 @@ When the highest primary score is in CVSS version 2.0, the following conversions
 | C, I, A: `PARTIAL` | VC, VI, VA: `LOW` |
 | C, I, A: `COMPLETE` | VC, VI, VA: `HIGH` |
 
-The NVD also keeps up with the following attributes to aide in CVSS 4.0 scoring conversion.
+The NVD also keeps up with the following attributes which can assist in CVSS 4.0 scoring conversion.
 
 | NVD CVSS 2.0 Score Attribute | CVSS 4.0 |
 | :--- | :--- |
