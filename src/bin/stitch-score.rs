@@ -378,7 +378,7 @@ fn score_cwes(db_path: &str, args: &Args) -> Result<()> {
 	}).with_context(|| format!("Could not get CWEs from the database."))?;
 
 	if !args.verbose {
-		println!("CWE,Title,Abstraction,Vector,Score");
+		println!("CWE,Title,Abstraction,Vector,ASD STIG,STIG Severity,Control,CCI,Score");
 	}
 
 	for cwe in cwes {
@@ -542,6 +542,21 @@ fn get_parent_cwes(
     Ok(results)
 }
 
+#[derive(Debug,Clone)]
+struct CWEDetails {
+	name: String,
+	abstraction: String,
+	category: bool,
+	view: bool,
+	confidentiality: bool,
+	integrity: bool,
+	availability: bool,
+	disaid: String,
+	severity: String,
+	control: String,
+	cci: String,
+}
+
 /// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
 fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 	let min_results_to_get_more = 50;
@@ -553,49 +568,80 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 
     let mut stmt_cwe = conn.prepare(
         "SELECT
-			name,
+			Weakness.name,
 			abstraction,
             category,
 			view,
 			confidentiality,
 			integrity,
-			availability
-        FROM Weakness
-        WHERE id = ?1",
+			availability,
+			DISAId,
+			Severity,
+			number,
+			RMFCCI.id
+        FROM Weakness JOIN STIGCheck ON STIGCheck.id = Weakness.STIGCheckId
+		JOIN MapSTIGCheckCCI ON STIGCheck.id = MapSTIGCheckCCI.STIGCheckId
+		JOIN RMFCCI ON MapSTIGCheckCCI.CCIId = RMFCCI.id
+		JOIN RMFControl ON RMFCCI.RMFControlId = RMFControl.id
+        WHERE Weakness.id = ?1",
     )?;
 
     // Query the database for the CVE's metrics
-    let cwe_data = stmt_cwe.query_row(params![cwe_num_id], |row| {
-        Ok((
-			row.get::<_, String>(0)?, //name
-            row.get::<_, String>(1)?, //abstraction
-			row.get::<_, bool>(2)?, //category
-			row.get::<_, bool>(3)?, //view
-			row.get::<_, bool>(4)?, //confidentiality
-			row.get::<_, bool>(5)?, //integrity
-			row.get::<_, bool>(6)?, //availability
-        ))
-    }).with_context(|| format!("Could not find CWE '{}' in the database.", cwe_id))?;
+    let cwe_data_elements = stmt_cwe.query_map(params![cwe_num_id], |row| {
+        Ok(CWEDetails {
+			name: row.get::<_, String>(0)?, //name
+            abstraction: row.get::<_, String>(1)?, //abstraction
+			category: row.get::<_, bool>(2)?, //category
+			view: row.get::<_, bool>(3)?, //view
+			confidentiality: row.get::<_, bool>(4)?, //confidentiality
+			integrity: row.get::<_, bool>(5)?, //integrity
+			availability: row.get::<_, bool>(6)?, //availability
+			disaid: row.get::<_, String>(7)?, //DISAId
+			severity: row.get::<_, String>(8)?, //severity
+			control: row.get::<_, String>(9)?, //RMF Control
+			cci: row.get::<_, u32>(10)?.to_string(), //CCI
+		})
+    })?;
 
-	if args.verbose {
-		println!("Found CWE: {} {}", cwe_id, cwe_data.0);
+	let cwe_data_result: rusqlite::Result<Vec<CWEDetails>> = cwe_data_elements.collect();
+
+	let mut cwe_data: Vec<CWEDetails> = cwe_data_result
+		.with_context(|| format!("Could not find or process CWE '{}' in the database.", cwe_id))?;
+
+	let (cwe_data_flatened, rest_of_data) = cwe_data
+    .split_first_mut()
+    .expect("cwe_data vector should not be empty at this point.");
+
+	cwe_data_flatened.cci.insert_str(0, "CCI-");
+
+	for element in rest_of_data.iter_mut() {
+		if !cwe_data_flatened.control.contains(&element.control) {
+			cwe_data_flatened.control.push_str(",");
+			cwe_data_flatened.control.push_str(&element.control);
+		}
+		cwe_data_flatened.cci.push_str(",");
+		cwe_data_flatened.cci.push_str(&element.cci)
 	}
 
-	if cwe_data.2 {
+	if args.verbose {
+		println!("Found CWE: {}", cwe_id);
+	}
+
+	if cwe_data_flatened.category {
 		if args.verbose {
 			println!("Categories cannot be scored.");
 		}
 		return Ok(());
 	}
 
-	if cwe_data.3 {
+	if cwe_data_flatened.view {
 		if args.verbose {
 			println!("Views cannot be scored.");
 		}
 		return Ok(());
 	}
 
-	if cwe_data.0.starts_with("DEPRECATED") {
+	if cwe_data_flatened.name.starts_with("DEPRECATED") {
 		if args.verbose {
 			println!("Deprecated CWEs cannot be scored.");
 		}
@@ -815,7 +861,7 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 			println!("Unable to score with fewer than 5 CVEs.");
 		}
 		else {
-			println!("{},\"{}\",{},N/A,{:.1}", cwe_num_id, cwe_data.0, cwe_data.1, 0.0);
+			println!("{},\"{}\",{},N/A,{},{},\"{}\",\"{}\",{:.1}", cwe_num_id, cwe_data_flatened.name, cwe_data_flatened.abstraction, cwe_data_flatened.disaid, cwe_data_flatened.severity, cwe_data_flatened.control, cwe_data_flatened.cci, 0.0);
 		}
 		return Ok(());
 	}
@@ -836,9 +882,9 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 		attack_requirements: mode(cves.iter().map(|c| c.attack_requirements.clone()), vec!["NONE".to_string(), "PRESENT".to_string()]),
 		privileges_required: mode(cves.iter().map(|c| c.privileges_required.clone()), vec!["NONE".to_string(), "LOW".to_string(), "HIGH".to_string()]),
 		user_interaction: mode(cves.iter().map(|c| c.user_interaction.clone()), vec!["NONE".to_string(), "PASSIVE".to_string(), "ACTIVE".to_string()]),
-		vuln_confidentiality_impact: mean_impact(cves.iter().map(|c| c.vuln_confidentiality_impact.clone()), cwe_data.4),
-		vuln_integrity_impact: mean_impact(cves.iter().map(|c| c.vuln_integrity_impact.clone()), cwe_data.5),
-		vuln_availability_impact: mean_impact(cves.iter().map(|c| c.vuln_availability_impact.clone()), cwe_data.6),
+		vuln_confidentiality_impact: mean_impact(cves.iter().map(|c| c.vuln_confidentiality_impact.clone()), cwe_data_flatened.confidentiality),
+		vuln_integrity_impact: mean_impact(cves.iter().map(|c| c.vuln_integrity_impact.clone()), cwe_data_flatened.integrity),
+		vuln_availability_impact: mean_impact(cves.iter().map(|c| c.vuln_availability_impact.clone()), cwe_data_flatened.availability),
 		sub_confidentiality_impact: mean_impact(cves.iter().map(|c| c.sub_confidentiality_impact.clone()), true),
 		sub_integrity_impact: mean_impact(cves.iter().map(|c| c.sub_integrity_impact.clone()), true),
 		sub_availability_impact: mean_impact(cves.iter().map(|c| c.sub_availability_impact.clone()), true),
@@ -965,10 +1011,10 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 
 	if args.verbose {
 		println!("Scoring VS: {}", vector_string);
-		println!("Abstraction: {}", cwe_data.1);
+		println!("Abstraction: {}", cwe_data_flatened.abstraction);
 	}
 	else {
-		print!("{},\"{}\",{},{},", cwe_num_id, cwe_data.0, cwe_data.1, vector_string);
+		print!("{},\"{}\",{},{},{},{},\"{}\",\"{}\",", cwe_num_id, cwe_data_flatened.name, cwe_data_flatened.abstraction, vector_string, cwe_data_flatened.disaid, cwe_data_flatened.severity, cwe_data_flatened.control, cwe_data_flatened.cci);
 	}
 
 	score_from_vector(&vector_string, &args)?;
