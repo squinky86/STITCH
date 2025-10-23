@@ -15,8 +15,7 @@ The STITCH Score Estimation software is licensed under the MIT license. A copy o
 
 This documentation and process are licensed under the **Creative Commons Attribution 4.0 International License (CC BY 4.0)**.
 
-To view a copy of this license, visit:
-<[https://creativecommons.org/licenses/by/4.0/](https://creativecommons.org/licenses/by/4.0/)>.
+To view a copy of this license, visit: <[https://creativecommons.org/licenses/by/4.0/](https://creativecommons.org/licenses/by/4.0/)>.
 
 This process was developed, in whole or in part, under U.S. Government Contract No. ending in 24-F-B013 with the U.S. Army, DEVCOM AvMC. For the full contract number, please contact the author(s) of this process.
 
