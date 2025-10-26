@@ -2,39 +2,39 @@
     "version": "2.0.0",
     "configurations": [
         {
-            "name": "Debug executable 'rusktex'",
+            "name": "Debug executable 'stitch'",
             "type": "lldb",
             "request": "launch",
             "cargo": {
                 "args": [
                     "run",
-                    "--bin=rusktex"
+                    "--bin=stitch"
                 ]
             },
             "args": []
         },
 		{
-            "name": "Debug executable 'rusktex-score'",
+            "name": "Debug executable 'stitch-score'",
             "type": "lldb",
             "request": "launch",
             "cargo": {
                 "args": [
                     "run",
-                    "--bin=rusktex-score"
+                    "--bin=stitch-score"
                 ]
             },
             "args": [
-                "CWE-917"
+                "SV-222612r961665_rule"
             ]
         },
         {
-            "name": "Debug unit tests in executable 'rusktex'",
+            "name": "Debug unit tests in executable 'stitch'",
             "type": "lldb",
             "request": "launch",
             "cargo": {
                 "args": [
                     "test",
-                    "--bin=rusktex"
+                    "--bin=stitch"
                 ]
             }
         }
