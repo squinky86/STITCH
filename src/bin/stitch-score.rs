@@ -281,11 +281,12 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
 			let mut stmt_ccis = conn.prepare(
 			"SELECT CCIId FROM MapSTIGCheckCCI WHERE STIGCheckId = ?1")?;
 
-			let ccis: Vec<serde_json::Value> = stmt_ccis.query_map([stig.id], |row| {
-				Ok(json!(row.get::<_, String>(0)?))
+			let ccis: Vec<serde_json::Value> = stmt_ccis.query_map([stigcheck.id], |row| {
+				Ok(json!(format!("CCI-{:06}", row.get::<_, u32>(0)?)))
 			})?
 			.filter_map(std::result::Result::ok)
 			.collect();
+
 			let mut status: String = "not_reviewed".to_string();
 			let mut finding_details: String = String::new();
 			if ids.contains(&stigcheck.disa_id) {
