@@ -260,7 +260,42 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 					"description" => {
 						if in_rule {
 							// Create a new Reader for the embedded XML content
-							let tbuf = text_buffer.trim().to_string();
+							let mut tbuf = text_buffer.trim().to_string();
+							//fix extraneous xml tags in the description
+							tbuf = tbuf.replace("<", "&lt;").replace(">", "&gt;");
+							//fix actual xml tags in description
+							tbuf = tbuf
+									.replace("&lt;VulnDiscussion&gt;", "<VulnDiscussion>")
+									.replace("&lt;/VulnDiscussion&gt;", "</VulnDiscussion>")
+									.replace("&lt;FalseNegatives&gt;", "<FalseNegatives>")
+									.replace("&lt;/FalseNegatives&gt;", "</FalseNegatives>")
+									.replace("&lt;FalsePositives&gt;", "<FalsePositives>")
+									.replace("&lt;/FalsePositives&gt;", "</FalsePositives>")
+									.replace("&lt;Documentable&gt;", "<Documentable>")
+									.replace("&lt;/Documentable&gt;", "</Documentable>")
+									.replace("&lt;Mitigations&gt;", "<Mitigations>")
+									.replace("&lt;/Mitigations&gt;", "</Mitigations>")
+									.replace("&lt;PotentialImpacts&gt;", "<PotentialImpacts>")
+									.replace("&lt;/PotentialImpacts&gt;", "</PotentialImpacts>")
+									.replace("&lt;ThirdPartyTools&gt;", "<ThirdPartyTools>")
+									.replace("&lt;/ThirdPartyTools&gt;", "</ThirdPartyTools>")
+									.replace("&lt;MitigationControl&gt;", "<MitigationControl>")
+									.replace("&lt;/MitigationControl&gt;", "</MitigationControl>")
+									.replace("&lt;Severity&gt;", "<Severity>")
+									.replace("&lt;/Severity&gt;", "</Severity>")
+									.replace("&lt;SeverityOverrideGuidance&gt;", "<SeverityOverrideGuidance>")
+									.replace("&lt;/SeverityOverrideGuidance&gt;", "</SeverityOverrideGuidance>")
+									.replace("&lt;CheckContent&gt;", "<CheckContent>")
+									.replace("&lt;/CheckContent&gt;", "</CheckContent>")
+									.replace("&lt;CheckSystem&gt;", "<CheckSystem>")
+									.replace("&lt;/CheckSystem&gt;", "</CheckSystem>")
+									.replace("&lt;IAControls&gt;", "<IAControls>")
+									.replace("&lt;/IAControls&gt;", "</IAControls>")
+									.replace("&lt;Responsibility&gt;", "<Responsibility>")
+									.replace("&lt;/Responsibility&gt;", "</Responsibility>")
+									.replace("&lt;References&gt;", "<References>")
+									.replace("&lt;/References&gt;", "</References>");
+							println!("Contents: {}", tbuf);
 							let mut desc_reader = Reader::from_str(&tbuf);
 							desc_reader.config_mut().trim_text(true);
 							
