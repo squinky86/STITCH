@@ -3,13 +3,13 @@
 
 use crate::common::{download_file,extract_from_zip,p,Args};
 
-use anyhow::{Context, Result};
-use quick_xml::events::Event;
-use quick_xml::Reader;
+use serde::{Deserialize, Serialize};
 use rusqlite::{params, Connection};
 use tokio::fs;
 use tempfile::NamedTempFile;
+use anyhow::{Context, Result};
 
+/// Public database structures
 #[derive(Debug)]
 pub struct Stig {
     pub id: u32,
@@ -50,6 +50,268 @@ pub struct StigCheck {
 	pub legacy_ids: String,
 }
 
+/// Root element of a STIG XML file
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename = "Benchmark")]
+pub struct Benchmark {
+    #[serde(rename = "@id")]
+    pub id: Option<String>,
+    
+    pub title: String,
+    
+    pub description: String,
+    
+    pub version: String,
+    
+    pub status: Option<String>,
+    
+    #[serde(rename = "plain-text")]
+    pub plain_texts: Vec<PlainText>,
+    
+    #[serde(rename = "front-matter")]
+    pub front_matter: Option<String>,
+    
+    #[serde(rename = "rear-matter")]
+    pub rear_matter: Option<String>,
+    
+    #[serde(rename = "Group", default)]
+    pub groups: Vec<Group>,
+}
+
+/// A group of related security requirements
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Group {
+    #[serde(rename = "@id")]
+    pub id: String,
+    
+    pub title: String,
+    
+    pub description: Option<String>,
+    
+    #[serde(rename = "Rule", default)]
+    pub rules: Vec<Rule>,
+}
+
+/// A specific security rule/requirement
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Rule {
+    #[serde(rename = "@id")]
+    pub id: String,
+    
+    #[serde(rename = "@severity")]
+    pub severity: String,
+
+	#[serde(rename = "@weight")]
+	pub weight: f32,
+    
+    pub version: String,
+    
+    pub title: String,
+    
+    pub description: String,
+    
+    #[serde(rename = "ident", default)]
+    pub idents: Vec<Ident>,
+    
+    pub check: Option<Check>,
+    
+    pub fixtext: Option<FixText>,
+    
+    pub fix: Option<Fix>,
+
+	pub reference: Reference,
+}
+
+/// A specific security rule/requirement
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Reference {
+    pub title: String,
+
+    pub publisher: String,
+    
+    #[serde(rename = "type")]
+    pub type_: String,
+    
+    pub subject: String,
+
+    pub identifier: String,
+}
+
+/// Identifier for a rule (CCI, Legacy ID, etc.)
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Ident {
+    #[serde(rename = "@system")]
+    pub system: String,
+    
+    #[serde(rename = "$value")]
+    pub value: String,
+}
+
+/// Identifier for Release, Generator, and Tooling
+#[derive(Debug, Deserialize, Serialize)]
+pub struct PlainText {
+    #[serde(rename = "@id")]
+    pub id: String,
+    
+    #[serde(rename = "$value")]
+    pub value: String,
+}
+
+/// Check information for verifying compliance
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Check {
+    #[serde(rename = "@system")]
+    pub system: String,
+    
+    #[serde(rename = "check-content-ref")]
+    pub check_content_ref: Option<CheckContentRef>,
+    
+    #[serde(rename = "check-content")]
+    pub check_content: Option<String>,
+}
+
+/// Reference to external check content
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CheckContentRef {
+    #[serde(rename = "@href")]
+    pub href: Option<String>,
+    
+    #[serde(rename = "@name")]
+    pub name: Option<String>,
+}
+
+/// Instructions for fixing a non-compliant finding
+#[derive(Debug, Deserialize, Serialize)]
+pub struct FixText {
+    #[serde(rename = "@fixref")]
+    pub fixref: Option<String>,
+    
+    #[serde(rename = "$value")]
+    pub value: String,
+}
+
+/// Automated fix information
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Fix {
+    #[serde(rename = "@id")]
+    pub id: Option<String>,
+    
+    #[serde(rename = "$value")]
+    pub value: Option<String>,
+}
+
+/// Parsed description fields from the rule description
+#[derive(Debug, Default)]
+pub struct ParsedDescription {
+    pub vuln_discussion: Option<String>,
+    pub false_positives: Option<String>,
+    pub false_negatives: Option<String>,
+	pub documentable: Option<String>,
+    pub mitigations: Option<String>,
+    pub security_override_guidance: Option<String>,
+    pub severity_override_guidance: Option<String>,
+    pub potential_impacts: Option<String>,
+    pub mitigation_control: Option<String>,
+    pub ia_controls: Option<String>,
+	pub responsibility: Option<String>,
+	pub third_party_tools: Option<String>,
+}
+
+impl Benchmark {
+	/// Get release info
+    pub fn release_info(&self) -> Vec<&str> {
+        self.plain_texts
+            .iter()
+            .filter(|i| {
+                i.id == "release-info"
+            })
+            .map(|i| i.value.as_str())
+            .collect()
+    }
+}
+
+impl Rule {
+    /// Parse the embedded XML-like tags in the description field
+    pub fn parse_description(&self) -> ParsedDescription {
+        let desc = &self.description;
+        
+        ParsedDescription {
+            vuln_discussion: extract_tag_content(desc, "VulnDiscussion"),
+            false_positives: extract_tag_content(desc, "FalsePositives"),
+            false_negatives: extract_tag_content(desc, "FalseNegatives"),
+			documentable: extract_tag_content(desc, "Documentable"),
+            mitigations: extract_tag_content(desc, "Mitigations"),
+            security_override_guidance: extract_tag_content(desc, "SecurityOverrideGuidance"),
+            severity_override_guidance: extract_tag_content(desc, "SeverityOverrideGuidance"),
+            potential_impacts: extract_tag_content(desc, "PotentialImpacts"),
+            mitigation_control: extract_tag_content(desc, "MitigationControl"),
+            ia_controls: extract_tag_content(desc, "IAControls"),
+			responsibility: extract_tag_content(desc, "Responsibility"),
+			third_party_tools: extract_tag_content(desc, "ThirdPartyTools"),
+        }
+    }
+    
+    /// Get the severity category (CAT I, II, or III)
+    pub fn severity_category(&self) -> &str {
+        match self.severity.as_str() {
+            "high" => "CAT I",
+            "medium" => "CAT II",
+            "low" => "CAT III",
+            _ => "Unknown",
+        }
+    }
+    
+    /// Get CCI identifiers
+    pub fn cci_idents(&self) -> Vec<&str> {
+        self.idents
+            .iter()
+            .filter(|i| {
+                i.system == "http://iase.disa.mil/cci" || 
+                i.system == "http://cyber.mil/cci"
+            })
+            .map(|i| i.value.as_str())
+            .collect()
+    }
+    
+    /// Get legacy identifier
+    pub fn legacy_ids(&self) -> Vec<&str> {
+        self.idents
+            .iter()
+            .filter(|i| i.system == "http://cyber.mil/legacy")
+            .map(|i| i.value.as_str())
+            .collect()
+    }
+}
+
+/// Extract content between XML-like tags in a string
+fn extract_tag_content(text: &str, tag: &str) -> Option<String> {
+    let start_tag = format!("<{}>", tag);
+    let end_tag = format!("</{}>", tag);
+    
+    if let Some(start_pos) = text.find(&start_tag) {
+        let content_start = start_pos + start_tag.len();
+        if let Some(end_pos) = text[content_start..].find(&end_tag) {
+            let content = &text[content_start..content_start + end_pos];
+            if !content.trim().is_empty() {
+                return Some(content.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Parse a STIG XML file from a string
+pub fn parse_stig_xml(xml_content: &str) -> Result<Benchmark, quick_xml::DeError> {
+    quick_xml::de::from_str(xml_content)
+}
+
+/// Parse a STIG XML file from a reader
+pub fn parse_stig_xml_reader<R: std::io::BufRead>(
+    reader: R,
+) -> Result<Benchmark, quick_xml::DeError> {
+    quick_xml::de::from_reader(reader)
+}
+
 pub async fn process_stig(conn: &Connection, args: &Args) -> Result<()> {
     let mut stig_temp_zip = NamedTempFile::new()?;
 	let mut stig_temp_xml = NamedTempFile::new()?;
@@ -71,369 +333,79 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
     let xml_content = fs::read_to_string(xml.path())
         .await
         .context("Failed to read STIG XML file")?;
-	
-    let mut reader = Reader::from_str(&xml_content);
-    reader.config_mut().trim_text(true);
 
-    let mut text_buffer = String::new();
-    let mut capture_text = false;
-	let mut buf = Vec::new(); // Buffer to store events
-    
-	let mut in_rule = false;
-	let mut in_ident_cci = false;
-	let mut in_ident_legacy = false;
+    let reader = std::io::Cursor::new(xml_content);
+    let benchmark = parse_stig_xml_reader(reader)?;
 
-	let mut tcheck_content = String::new();
-    let mut tcheck_system = String::new();
-    let mut tdisa_id  = String::new();
-    let mut tdocumentable = false;
-    let mut tfalse_negatives  = String::new();
-    let mut tfalse_positives  = String::new();
-    let mut tfix_text  = String::new();
-    let mut tia_controls  = String::new();
-    let mut tmitigation_control  = String::new();
-    let mut tmitigations  = String::new();
-    let mut tpotential_impacts  = String::new();
-    let mut treference  = String::new();
-    let mut tresponsibility  = String::new();
-    let mut tseverity  = String::new();
-    let mut tseverity_override_guidance  = String::new();
-    let mut tthird_party_tools  = String::new();
-    let mut ttitle  = String::new();
-    let mut tvuln_group_id  = String::new();
-    let mut tvuln_id  = String::new();
-    let mut tversion  = String::new();
-    let mut tvuln_discussion  = String::new();
-    let mut tweight: f64 = 10.0;
-	let mut tccis: Vec<u32> = Vec::new();
-	let mut tlegacy: Vec<String> = Vec::new();
+	//create the new STIG
+	let _ = conn.execute(
+		"INSERT INTO STIG (title, version, stigId, release, identifier) VALUES (?1, ?2, ?3, ?4, ?5)",
+		params![
+			benchmark.title,
+			benchmark.version,
+			benchmark.id.clone().unwrap_or_default(),
+			benchmark.release_info().first().ok_or_else(|| anyhow::anyhow!("Missing release info"))?,
+			benchmark.groups.first().ok_or_else(|| anyhow::anyhow!("Missing group"))?.rules.first().ok_or_else(|| anyhow::anyhow!("Missing rule"))?.reference.identifier.clone()
+		],
+	);
+	let stig_id = conn.last_insert_rowid();
 
-	let mut stitle = String::new();
-	let mut stig_id: usize = 0;
-	let mut sversion = String::new();
-	let mut sid = String::new();
-	let mut srelease = String::new();
-
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) => {
-                let current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                match current_element.as_str() {
-                    "check" => {
-						for attr in e.attributes() {
-                            let attr = attr.context("Failed to parse STIG check attribute")?;
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            let value = String::from_utf8_lossy(&attr.value);
-
-                            if key == "system" {
-								tcheck_system = value.to_string();
-                            }
-                        }
+	// Now iterate through the groups and rules to insert them
+	for group in &benchmark.groups {
+		for rule in &group.rules {
+			let check = rule.check.as_ref().ok_or_else(|| anyhow::anyhow!("Missing check for rule {}", rule.id))?;
+			let desc = rule.parse_description();
+			conn.execute(
+				"INSERT INTO STIGCheck (
+					CheckContent, CheckSys, DISAId, Documentable, 
+					FalseNegatives, FalsePositives, FixText, IAControls,
+					MitigationControl, Mitigations, PotentialImpacts,
+					Reference, Responsibility, STIGId, Severity,
+					SeverityOverrideGuidance, ThirdPartyTools, Title,
+					VULNGroupId, VULNId, Version, VulnDiscussion, Weight, LegacyIds
+				) VALUES (
+					?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+					?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
+				)",
+				params![
+					check.check_content.as_ref().ok_or_else(|| anyhow::anyhow!("Missing check-content"))?.clone(),
+					check.system,
+					rule.id,
+					desc.documentable.ok_or_else(|| anyhow::anyhow!("Missing Documentable"))? == "true",
+					desc.false_negatives,
+					desc.false_positives,
+					rule.fixtext.as_ref().map_or_else(|| "".to_string(), |f| f.value.clone()),
+					desc.ia_controls,
+					desc.mitigation_control,
+					desc.mitigations,
+					desc.potential_impacts,
+					rule.reference.identifier,
+					desc.responsibility,
+					stig_id,
+					rule.severity,
+					desc.severity_override_guidance,
+					desc.third_party_tools,
+					rule.title,
+					group.title,
+					group.id,
+					rule.version,
+					desc.vuln_discussion,
+					rule.weight,
+					rule.legacy_ids().join(",")
+				],
+			)?;
+			let check_id = conn.last_insert_rowid();
+			for cci_id_str in rule.cci_idents() {
+				if let Ok(cci_id) = cci_id_str.trim_start_matches("CCI-").parse::<u32>() {
+					if cci_id != 0 {
+						conn.execute(
+							"INSERT INTO MapSTIGCheckCCI (STIGCheckId, CCIId) SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM RMFCCI WHERE id = ?2)",
+							params![check_id, cci_id],
+						)?;
 					}
-					"Group" => {
-                        for attr in e.attributes() {
-                            let attr = attr.context("Failed to parse STIG group attribute")?;
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            let value = String::from_utf8_lossy(&attr.value);
-
-                            if key == "id" {
-								tvuln_id = value.to_string();
-                            }
-                        }
-                    }
-					"ident" => {
-						for attr in e.attributes() {
-                            let attr = attr.context("Failed to parse ident attribute")?;
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            let value = String::from_utf8_lossy(&attr.value);
-
-                            if key == "system" {
-								if value == "http://cyber.mil/cci" {
-									in_ident_cci = true;
-									capture_text = true;
-									text_buffer.clear();
-								}
-								else if value == "http://cyber.mil/legacy" {
-									in_ident_legacy = true;
-									capture_text = true;
-									text_buffer.clear();
-								}
-                            }
-                        }
-					}
-					"Rule" => {
-						in_rule = true;
-						for attr in e.attributes() {
-                            let attr = attr.context("Failed to parse rule attribute")?;
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            let value = String::from_utf8_lossy(&attr.value);
-
-							match key.as_ref() {
-								"id" => {
-									tdisa_id = value.to_string();
-								}
-								"weight" => {
-									tweight = value.parse::<f64>().unwrap_or(10.0);
-								}
-								"severity" => {
-									tseverity = value.to_string();
-								}
-								_ => {}
-							}
-                        }
-					}
-					"plain-text" => {
-						for attr in e.attributes() {
-                            let attr = attr.context("Failed to parse rule attribute")?;
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            let value = String::from_utf8_lossy(&attr.value);
-
-							match key.as_ref() {
-								"id" => {
-									if value.to_string() == "release-info" {
-										capture_text = true;
-										text_buffer.clear();
-									}
-								}
-								_ => {}
-							}
-                        }
-					}
-					"Benchmark" => {
-						for attr in e.attributes() {
-                            let attr = attr.context("Failed to parse rule attribute")?;
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            let value = String::from_utf8_lossy(&attr.value);
-
-							match key.as_ref() {
-								"id" => {
-									sid = value.to_string();
-								}
-								_ => {}
-							}
-                        }
-					}
-					"title" | "description" | "fixtext" | "check-content" | "version" | "dc:identifier" => {
-						capture_text = true;
-						text_buffer.clear();
-					}
-                    _ => {
-                    }
-                }
-            }
-            Ok(Event::Text(e)) => {
-                if capture_text {
-                    // Get the raw text to preserve XML tags
-                    text_buffer.push_str(std::str::from_utf8(e.as_ref()).unwrap_or_default());
-                }
-            }
-            Ok(Event::End(ref e)) => {
-                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                match tag_name.as_str() {
-                    "title" => {
-						if stitle.is_empty() {
-							stitle = text_buffer.trim().to_string();
-						}
-						if in_rule {
-							ttitle = text_buffer.trim().to_string();
-						}
-						else {
-							tvuln_group_id = text_buffer.trim().to_string();
-						}
-					}
-					"ident" => {
-						if in_rule {
-							if in_ident_cci {
-								let tcci_str = text_buffer.trim_start_matches("CCI-").to_string();
-								if tcci_str.len() > 0 {
-									tccis.push(tcci_str.parse::<u32>().unwrap_or(0));
-								}
-								in_ident_cci = false;
-							}
-							else if in_ident_legacy {
-								let tlegacy_str = text_buffer.trim().to_string();
-								if tlegacy_str.len() > 0 {
-									tlegacy.push(tlegacy_str);
-								}
-							}
-						}
-					}
-					"description" => {
-						if in_rule {
-							// Create a new Reader for the embedded XML content
-							let mut tbuf = text_buffer.trim().to_string();
-							//fix extraneous xml tags in the description
-							tbuf = tbuf.replace("<", "&lt;").replace(">", "&gt;");
-							//fix actual xml tags in description
-							let tags_to_fix = [
-								"VulnDiscussion", "FalseNegatives", "FalsePositives", "Documentable",
-								"Mitigations", "PotentialImpacts", "ThirdPartyTools", "MitigationControl",
-								"Severity", "SeverityOverrideGuidance", "CheckContent", "CheckSystem",
-								"IAControls", "Responsibility", "References"
-							];
-							//fix for missing tags
-							for tag in tags_to_fix.iter() {
-								tbuf = tbuf
-									.replace(&format!("/{}", tag), "</REPLACEME>")
-									.replace(&format!("{}", tag), &format!("<{}>", tag));
-								tbuf = tbuf.replace("</REPLACEME>", &format!("</{}>", tag));
-							}
-							let mut desc_reader = Reader::from_str(&tbuf);
-							desc_reader.config_mut().trim_text(true);
-							
-							let mut desc_buf = Vec::new();
-							let mut desc_text = String::new();
-							let mut desc_capture = false;
-					
-							loop {
-								match desc_reader.read_event_into(&mut desc_buf) {
-									Ok(Event::Start(_)) => {
-										desc_capture = true;
-										desc_text.clear();
-									}
-									Ok(Event::Text(e)) => {
-										if desc_capture {
-											desc_text.push_str(&e.decode().unwrap_or_default());
-										}
-									}
-									Ok(Event::End(ref e)) => {
-										let end_tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
-										match end_tag.as_str() {
-											"VulnDiscussion" => tvuln_discussion = desc_text.trim().to_string(),
-											"FalseNegatives" => tfalse_negatives = desc_text.trim().to_string(),
-											"FalsePositives" => tfalse_positives = desc_text.trim().to_string(),
-											"Documentable" => tdocumentable = desc_text.trim().eq_ignore_ascii_case("true"),
-											"Mitigations" => tmitigations = desc_text.trim().to_string(),
-											"PotentialImpacts" => tpotential_impacts = desc_text.trim().to_string(),
-											"ThirdPartyTools" => tthird_party_tools = desc_text.trim().to_string(),
-											"MitigationControl" => tmitigation_control = desc_text.trim().to_string(),
-											"Severity" => tseverity = desc_text.trim().to_string(),
-											"SeverityOverrideGuidance" => tseverity_override_guidance = desc_text.trim().to_string(),
-											"CheckContent" => tcheck_content = desc_text.trim().to_string(),
-											"CheckSystem" => tcheck_system = desc_text.trim().to_string(),
-											"IAControls" => tia_controls = desc_text.trim().to_string(),
-											"Responsibility" => tresponsibility = desc_text.trim().to_string(),
-											"References" => treference = desc_text.trim().to_string(),
-											_ => {}
-										}
-										desc_capture = false;
-									}
-									Ok(Event::Eof) => break,
-									Err(e) => {
-										eprintln!("Error parsing description XML: {}", e);
-										break;
-									}
-									_ => {}
-								}
-								desc_buf.clear();
-							}
-						}
-					}
-					"Rule" => {
-                        in_rule = false;
-                        // Insert the check into database
-                        conn.execute(
-                            "INSERT INTO STIGCheck (
-                                CheckContent, CheckSys, DISAId, Documentable, 
-                                FalseNegatives, FalsePositives, FixText, IAControls,
-                                MitigationControl, Mitigations, PotentialImpacts,
-                                Reference, Responsibility, STIGId, Severity,
-                                SeverityOverrideGuidance, ThirdPartyTools, Title,
-                                VULNGroupId, VULNId, Version, VulnDiscussion, Weight, LegacyIds
-                            ) VALUES (
-                                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                                ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
-                            )",
-                            params![
-                                tcheck_content,
-                                tcheck_system,
-                                tdisa_id,
-                                tdocumentable,
-                                tfalse_negatives,
-                                tfalse_positives,
-                                tfix_text,
-                                tia_controls,
-                                tmitigation_control,
-                                tmitigations,
-                                tpotential_impacts,
-                                treference,
-                                tresponsibility,
-                                stig_id,
-                                tseverity,
-                                tseverity_override_guidance,
-                                tthird_party_tools,
-                                ttitle,
-                                tvuln_group_id,
-                                tvuln_id,
-                                tversion,
-                                tvuln_discussion,
-                                tweight,
-								tlegacy.join(",")
-                            ],
-                        )?;
-						let check_id = conn.last_insert_rowid();
-						
-						// Insert CCI mappings
-						for cci_id in &tccis {
-							if *cci_id != 0 {
-                                conn.execute(
-									"INSERT INTO MapSTIGCheckCCI (STIGCheckId, CCIId) 
-									SELECT ?1, ?2 
-									WHERE EXISTS (SELECT 1 FROM RMFCCI WHERE id = ?2)",
-									params![check_id, cci_id],
-								)?;
-							}
-						}
-						
-						// Clear the CCIs collection
-						tccis.clear();
-						tlegacy.clear();
-                    }
-					"fixtext" => {
-						if in_rule {
-							tfix_text = text_buffer.trim().to_string();
-						}
-					}
-					"check-content" => {
-						if in_rule {
-							tcheck_content = text_buffer.trim().to_string();
-						}
-					}
-					"version" => {
-						if in_rule {
-							tversion = text_buffer.trim().to_string();
-						}
-						else {
-							sversion = text_buffer.trim().to_string();
-						}
-					}
-					"plain-text" => {
-						srelease = text_buffer.trim().to_string();
-					}
-					"dc:identifier" => {
-						if stig_id == 0 {
-							stig_id = conn.execute(
-								"INSERT INTO STIG (title, version, stigId, release, identifier) VALUES (?1, ?2, ?3, ?4, ?5)",
-								params![
-									stitle, // Default classification
-									sversion,
-									sid,
-									srelease,
-									text_buffer.trim().to_string()
-								],
-							)?;
-						}
-					}
-                    _ => {}
-                }
-                capture_text = false;
-            }
-            Ok(Event::Eof) => break,
-            Err(e) => return Err(anyhow::anyhow!("STIG XML parsing error: {}", e)),
-            _ => {}
-        }
-        buf.clear();
-    }
-
-    Ok(())
+				}
+			}
+		}
+	}
+	Ok(())
 }
