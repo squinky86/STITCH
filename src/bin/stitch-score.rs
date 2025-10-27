@@ -13,6 +13,10 @@ use serde_json::json;
 use chrono::{SecondsFormat, Utc};
 use uuid::Uuid;
 
+fn get_controls_from_ccis(ccis: Vec<u32>, db_path: &str) {
+	//todo
+}
+
 fn mean_impact(iter: impl Iterator<Item = String>, affects: bool) -> String {
 	if !affects {
 		return String::from("NONE");
@@ -178,8 +182,16 @@ struct Args {
 	pub verbose: bool,
 
     /// Export STIG checks as a CKLB JSON file (input should be comma-separated SV IDs)
-    #[arg(short = 'j', long)]
-    pub export_json: bool,
+    #[arg(short = 's', long)]
+    pub cklb: bool,
+
+	/// Export JSON of the RMF control information associated with a list of comma-separated CCIs
+	#[arg(short = 'c', long)]
+	pub ccis: bool,
+
+	/// Export JSON of the RMF control information associated with a list of comma-separated RMF controls
+	#[arg(short = 'r', long)]
+	pub controls: bool,
 }
 
 fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
@@ -395,13 +407,19 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let input = args.input.trim().to_uppercase();
 
-    if args.export_json {
+    if args.cklb {
         if input.starts_with("SV-") {
             export_stig_json(&input, &args.db)?;
         } else {
             anyhow::bail!("For JSON export, input must be a comma-separated list of STIG rule IDs (starting with 'SV-')");
         }
-    } else if input.starts_with("CVSS:") {
+    } else if args.ccis {
+		let ccis: Vec<u32> = input.split(",")
+			.map(|s| s.to_ascii_uppercase().trim_start_matches("CCI-").parse::<u32>().unwrap_or(0))
+			.filter(|&id| id != 0)
+			.collect();
+		get_controls_from_ccis(ccis, &args.db);
+	} else if input.starts_with("CVSS:") {
         score_from_vector(&input, &args)?;
     } else if input.starts_with("CVE-") {
         score_from_cve(&input, &args.db, &args)?;
