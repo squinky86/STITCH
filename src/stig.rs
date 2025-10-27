@@ -71,13 +71,14 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
     let xml_content = fs::read_to_string(xml.path())
         .await
         .context("Failed to read STIG XML file")?;
-
+	
     let mut reader = Reader::from_str(&xml_content);
+    reader.config_mut().trim_text(true);
 
-    let mut buf = Vec::new();
     let mut text_buffer = String::new();
     let mut capture_text = false;
-
+	let mut buf = Vec::new(); // Buffer to store events
+    
 	let mut in_rule = false;
 	let mut in_ident_cci = false;
 	let mut in_ident_legacy = false;
@@ -264,38 +265,19 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 							//fix extraneous xml tags in the description
 							tbuf = tbuf.replace("<", "&lt;").replace(">", "&gt;");
 							//fix actual xml tags in description
-							tbuf = tbuf
-									.replace("&lt;VulnDiscussion&gt;", "<VulnDiscussion>")
-									.replace("&lt;/VulnDiscussion&gt;", "</VulnDiscussion>")
-									.replace("&lt;FalseNegatives&gt;", "<FalseNegatives>")
-									.replace("&lt;/FalseNegatives&gt;", "</FalseNegatives>")
-									.replace("&lt;FalsePositives&gt;", "<FalsePositives>")
-									.replace("&lt;/FalsePositives&gt;", "</FalsePositives>")
-									.replace("&lt;Documentable&gt;", "<Documentable>")
-									.replace("&lt;/Documentable&gt;", "</Documentable>")
-									.replace("&lt;Mitigations&gt;", "<Mitigations>")
-									.replace("&lt;/Mitigations&gt;", "</Mitigations>")
-									.replace("&lt;PotentialImpacts&gt;", "<PotentialImpacts>")
-									.replace("&lt;/PotentialImpacts&gt;", "</PotentialImpacts>")
-									.replace("&lt;ThirdPartyTools&gt;", "<ThirdPartyTools>")
-									.replace("&lt;/ThirdPartyTools&gt;", "</ThirdPartyTools>")
-									.replace("&lt;MitigationControl&gt;", "<MitigationControl>")
-									.replace("&lt;/MitigationControl&gt;", "</MitigationControl>")
-									.replace("&lt;Severity&gt;", "<Severity>")
-									.replace("&lt;/Severity&gt;", "</Severity>")
-									.replace("&lt;SeverityOverrideGuidance&gt;", "<SeverityOverrideGuidance>")
-									.replace("&lt;/SeverityOverrideGuidance&gt;", "</SeverityOverrideGuidance>")
-									.replace("&lt;CheckContent&gt;", "<CheckContent>")
-									.replace("&lt;/CheckContent&gt;", "</CheckContent>")
-									.replace("&lt;CheckSystem&gt;", "<CheckSystem>")
-									.replace("&lt;/CheckSystem&gt;", "</CheckSystem>")
-									.replace("&lt;IAControls&gt;", "<IAControls>")
-									.replace("&lt;/IAControls&gt;", "</IAControls>")
-									.replace("&lt;Responsibility&gt;", "<Responsibility>")
-									.replace("&lt;/Responsibility&gt;", "</Responsibility>")
-									.replace("&lt;References&gt;", "<References>")
-									.replace("&lt;/References&gt;", "</References>");
-							println!("Contents: {}", tbuf);
+							let tags_to_fix = [
+								"VulnDiscussion", "FalseNegatives", "FalsePositives", "Documentable",
+								"Mitigations", "PotentialImpacts", "ThirdPartyTools", "MitigationControl",
+								"Severity", "SeverityOverrideGuidance", "CheckContent", "CheckSystem",
+								"IAControls", "Responsibility", "References"
+							];
+							//fix for missing tags
+							for tag in tags_to_fix.iter() {
+								tbuf = tbuf
+									.replace(&format!("/{}", tag), "</REPLACEME>")
+									.replace(&format!("{}", tag), &format!("<{}>", tag));
+								tbuf = tbuf.replace("</REPLACEME>", &format!("</{}>", tag));
+							}
 							let mut desc_reader = Reader::from_str(&tbuf);
 							desc_reader.config_mut().trim_text(true);
 							
