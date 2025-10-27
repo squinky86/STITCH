@@ -95,10 +95,11 @@ FOREIGN KEY (RMFControlId) REFERENCES RMFControl(id)
 	conn.execute(
 		"CREATE TABLE IF NOT EXISTS STIG (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
-classification TEXT,
-description TEXT,
-name TEXT,
-version TEXT
+title TEXT,
+version TEXT,
+stigId TEXT,
+release TEXT,
+identifier TEXT
 );",
 		[],
 	)
@@ -131,6 +132,7 @@ Version TEXT,
 VulnDiscussion TEXT,
 Weight NUMERIC NOT NULL DEFAULT 10.0,
 CWEId INTEGER,
+LegacyIds TEXT,
 FOREIGN KEY(CWEId) REFERENCES Weakness(id),
 FOREIGN KEY(STIGId) REFERENCES STIG(id) ON DELETE CASCADE
 );",

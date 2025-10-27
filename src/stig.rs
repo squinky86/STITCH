@@ -10,6 +10,46 @@ use rusqlite::{params, Connection};
 use tokio::fs;
 use tempfile::NamedTempFile;
 
+#[derive(Debug)]
+pub struct Stig {
+    pub id: u32,
+    pub title: String,
+    pub version: String,
+    pub stig_id: String,
+    pub release: String,
+	pub identifier: String,
+}
+
+#[derive(Debug)]
+pub struct StigCheck {
+    pub id: u32,
+    pub check_content: String,
+	pub check_sys: String,
+	pub disa_id: String,
+	pub documentable: bool,
+	pub false_negatives: String,
+	pub false_positives: String,
+	pub fix_text: String,
+	pub ia_controls: String,
+	pub mitigation_control: String,
+	pub mitigations: String,
+	pub potential_impacts: String,
+	pub reference: String,
+	pub responsibility: String,
+	pub stig_id: u32,
+	pub severity: String,
+	pub severity_override_guidance: String,
+	pub third_party_tools: String,
+	pub title: String,
+	pub vuln_group_id: String,
+	pub vuln_id: String,
+	pub version: String,
+	pub vuln_discussion: String,
+	pub weight: f32,
+	pub cwe_id: u32,
+	pub legacy_ids: String,
+}
+
 pub async fn process_stig(conn: &Connection, args: &Args) -> Result<()> {
     let mut stig_temp_zip = NamedTempFile::new()?;
 	let mut stig_temp_xml = NamedTempFile::new()?;
@@ -33,7 +73,6 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
         .context("Failed to read STIG XML file")?;
 
     let mut reader = Reader::from_str(&xml_content);
-    reader.config_mut().trim_text(true);
 
     let mut buf = Vec::new();
     let mut text_buffer = String::new();
@@ -41,6 +80,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 
 	let mut in_rule = false;
 	let mut in_ident_cci = false;
+	let mut in_ident_legacy = false;
 
 	let mut tcheck_content = String::new();
     let mut tcheck_system = String::new();
@@ -65,17 +105,13 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
     let mut tvuln_discussion  = String::new();
     let mut tweight: f64 = 10.0;
 	let mut tccis: Vec<u32> = Vec::new();
+	let mut tlegacy: Vec<String> = Vec::new();
 
-    // Insert STIG record first to get its ID
-    let stig_id = conn.execute(
-        "INSERT INTO STIG (classification, description, name, version) VALUES (?1, ?2, ?3, ?4)",
-        params![
-            "UNCLASSIFIED", // Default classification
-            "Application Security and Development STIG",
-            "ASD STIG",
-            "V6R3"
-        ],
-    )?;
+	let mut stitle = String::new();
+	let mut stig_id: usize = 0;
+	let mut sversion = String::new();
+	let mut sid = String::new();
+	let mut srelease = String::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -116,6 +152,11 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 									capture_text = true;
 									text_buffer.clear();
 								}
+								else if value == "http://cyber.mil/legacy" {
+									in_ident_legacy = true;
+									capture_text = true;
+									text_buffer.clear();
+								}
                             }
                         }
 					}
@@ -140,7 +181,38 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 							}
                         }
 					}
-					"title" | "description" | "fixtext" | "check-content" | "version" => {
+					"plain-text" => {
+						for attr in e.attributes() {
+                            let attr = attr.context("Failed to parse rule attribute")?;
+                            let key = String::from_utf8_lossy(attr.key.as_ref());
+                            let value = String::from_utf8_lossy(&attr.value);
+
+							match key.as_ref() {
+								"id" => {
+									if value.to_string() == "release-info" {
+										capture_text = true;
+										text_buffer.clear();
+									}
+								}
+								_ => {}
+							}
+                        }
+					}
+					"Benchmark" => {
+						for attr in e.attributes() {
+                            let attr = attr.context("Failed to parse rule attribute")?;
+                            let key = String::from_utf8_lossy(attr.key.as_ref());
+                            let value = String::from_utf8_lossy(&attr.value);
+
+							match key.as_ref() {
+								"id" => {
+									sid = value.to_string();
+								}
+								_ => {}
+							}
+                        }
+					}
+					"title" | "description" | "fixtext" | "check-content" | "version" | "dc:identifier" => {
 						capture_text = true;
 						text_buffer.clear();
 					}
@@ -150,13 +222,17 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
             }
             Ok(Event::Text(e)) => {
                 if capture_text {
-                    text_buffer.push_str(&e.decode().unwrap_or_default());
+                    // Get the raw text to preserve XML tags
+                    text_buffer.push_str(std::str::from_utf8(e.as_ref()).unwrap_or_default());
                 }
             }
             Ok(Event::End(ref e)) => {
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match tag_name.as_str() {
                     "title" => {
+						if stitle.is_empty() {
+							stitle = text_buffer.trim().to_string();
+						}
 						if in_rule {
 							ttitle = text_buffer.trim().to_string();
 						}
@@ -173,46 +249,18 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 								}
 								in_ident_cci = false;
 							}
+							else if in_ident_legacy {
+								let tlegacy_str = text_buffer.trim().to_string();
+								if tlegacy_str.len() > 0 {
+									tlegacy.push(tlegacy_str);
+								}
+							}
 						}
 					}
 					"description" => {
 						if in_rule {
 							// Create a new Reader for the embedded XML content
-							let mut tbuf = text_buffer.trim().to_string();
-							//fix extraneous xml tags in the description
-							tbuf = tbuf.replace("<", "&lt;").replace(">", "&gt;");
-							//fix actual xml tags in description
-							tbuf = tbuf
-									.replace("&lt;VulnDiscussion&gt;", "<VulnDiscussion>")
-									.replace("&lt;/VulnDiscussion&gt;", "</VulnDiscussion>")
-									.replace("&lt;FalseNegatives&gt;", "<FalseNegatives>")
-									.replace("&lt;/FalseNegatives&gt;", "</FalseNegatives>")
-									.replace("&lt;FalsePositives&gt;", "<FalsePositives>")
-									.replace("&lt;/FalsePositives&gt;", "</FalsePositives>")
-									.replace("&lt;Documentable&gt;", "<Documentable>")
-									.replace("&lt;/Documentable&gt;", "</Documentable>")
-									.replace("&lt;Mitigations&gt;", "<Mitigations>")
-									.replace("&lt;/Mitigations&gt;", "</Mitigations>")
-									.replace("&lt;PotentialImpacts&gt;", "<PotentialImpacts>")
-									.replace("&lt;/PotentialImpacts&gt;", "</PotentialImpacts>")
-									.replace("&lt;ThirdPartyTools&gt;", "<ThirdPartyTools>")
-									.replace("&lt;/ThirdPartyTools&gt;", "</ThirdPartyTools>")
-									.replace("&lt;MitigationControl&gt;", "<MitigationControl>")
-									.replace("&lt;/MitigationControl&gt;", "</MitigationControl>")
-									.replace("&lt;Severity&gt;", "<Severity>")
-									.replace("&lt;/Severity&gt;", "</Severity>")
-									.replace("&lt;SeverityOverrideGuidance&gt;", "<SeverityOverrideGuidance>")
-									.replace("&lt;/SeverityOverrideGuidance&gt;", "</SeverityOverrideGuidance>")
-									.replace("&lt;CheckContent&gt;", "<CheckContent>")
-									.replace("&lt;/CheckContent&gt;", "</CheckContent>")
-									.replace("&lt;CheckSystem&gt;", "<CheckSystem>")
-									.replace("&lt;/CheckSystem&gt;", "</CheckSystem>")
-									.replace("&lt;IAControls&gt;", "<IAControls>")
-									.replace("&lt;/IAControls&gt;", "</IAControls>")
-									.replace("&lt;Responsibility&gt;", "<Responsibility>")
-									.replace("&lt;/Responsibility&gt;", "</Responsibility>")
-									.replace("&lt;References&gt;", "<References>")
-									.replace("&lt;/References&gt;", "</References>");
+							let tbuf = text_buffer.trim().to_string();
 							let mut desc_reader = Reader::from_str(&tbuf);
 							desc_reader.config_mut().trim_text(true);
 							
@@ -274,10 +322,10 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
                                 MitigationControl, Mitigations, PotentialImpacts,
                                 Reference, Responsibility, STIGId, Severity,
                                 SeverityOverrideGuidance, ThirdPartyTools, Title,
-                                VULNGroupId, VULNId, Version, VulnDiscussion, Weight
+                                VULNGroupId, VULNId, Version, VulnDiscussion, Weight, LegacyIds
                             ) VALUES (
                                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                                ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23
+                                ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
                             )",
                             params![
                                 tcheck_content,
@@ -302,7 +350,8 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
                                 tvuln_id,
                                 tversion,
                                 tvuln_discussion,
-                                tweight
+                                tweight,
+								tlegacy.join(",")
                             ],
                         )?;
 						let check_id = conn.last_insert_rowid();
@@ -321,6 +370,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 						
 						// Clear the CCIs collection
 						tccis.clear();
+						tlegacy.clear();
                     }
 					"fixtext" => {
 						if in_rule {
@@ -335,6 +385,26 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 					"version" => {
 						if in_rule {
 							tversion = text_buffer.trim().to_string();
+						}
+						else {
+							sversion = text_buffer.trim().to_string();
+						}
+					}
+					"plain-text" => {
+						srelease = text_buffer.trim().to_string();
+					}
+					"dc:identifier" => {
+						if stig_id == 0 {
+							stig_id = conn.execute(
+								"INSERT INTO STIG (title, version, stigId, release, identifier) VALUES (?1, ?2, ?3, ?4, ?5)",
+								params![
+									stitle, // Default classification
+									sversion,
+									sid,
+									srelease,
+									text_buffer.trim().to_string()
+								],
+							)?;
 						}
 					}
                     _ => {}

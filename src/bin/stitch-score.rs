@@ -1,16 +1,16 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-use stitch::{nvd::CvssDataV40};
+use stitch::{nvd::CvssDataV40, stig::Stig, stig::StigCheck};
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use cvss::v3::Base;
 use cvss::v4::Vector;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Row};
 use std::{str::FromStr, collections::HashMap};
 use serde_json::json;
-use chrono::Utc;
+use chrono::{SecondsFormat, Utc};
 use uuid::Uuid;
 
 fn mean_impact(iter: impl Iterator<Item = String>, affects: bool) -> String {
@@ -188,62 +188,189 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
 
     let ids: Vec<String> = stig_ids.split(',').map(|s| s.replace("ULE", "ule").replace("R", "r")).collect();
     
-    let mut stmt = conn.prepare(
-		"SELECT sc.DISAId, sc.VULNId, sc.Title, sc.Severity, sc.CheckContent, sc.FixText, sc.VulnDiscussion, s.name, s.version 
-			FROM STIGCheck sc 
-			JOIN STIG s ON sc.STIGId = s.id"
-	)?;
+	let mut stmt_stig = conn.prepare("SELECT id, title, version, stigId, release, identifier FROM STIG")?;
+	let stig_iterator = stmt_stig.query_map([], |row: &Row| {
+        Ok(Stig {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            version: row.get(2)?,
+            stig_id: row.get(3)?,
+            release: row.get(4)?,
+			identifier: row.get(5)?,
+        })
+    })?;
+    
+    let stigs : Vec<Stig> = stig_iterator.collect::<Result<Vec<Stig>, _>>()?;
 
-	let result: Vec<serde_json::Value> = stmt.query_map([], |row| {
-		let disa_id = row.get::<_, String>(0)?;
-		Ok(json!({
-			"uuid": Uuid::new_v4().to_string(),
-			"stig_uuid": "9ca7466e-ca17-4b75-b376-4cce9987f1f8",
-			"Vuln_Num": row.get::<_, String>(1)?,
-			"Rule_ID": disa_id,
-			"Rule_Title": row.get::<_, String>(2)?,
-			"Rule_Ver": row.get::<_, String>(8)?,
-			"Severity": row.get::<_, String>(3)?,
-			"Status": if ids.contains(&disa_id) {
-				"Open"
-			} else {
-				"Not_Reviewed"
-			},
-			"Finding_Details": format!("A software assurance review identified findings against STIG check {}.", disa_id),
-			"Comments": "",
-			"Details": row.get::<_, String>(5)?, // VulnDiscussion
-			"Fix_Text": row.get::<_, String>(4)?,
-			"Timestamp": Utc::now().to_rfc3339(),
-			"StigId": row.get::<_, String>(6)?,
-			"StigVersion": row.get::<_, String>(7)?
-		}))
-	})?
-    .filter_map(std::result::Result::ok)
-	.collect(); // *** This is the crucial step: collecting the iterator into a Vec;
+	let mut result_stigs: Vec<serde_json::Value> = Vec::new();
+
+	for stig in stigs {
+		let stig_uuid = Uuid::new_v4().to_string();
+		let mut result_checks: Vec<serde_json::Value> = Vec::new();
+
+		let mut stmt_check = conn.prepare(
+			"SELECT
+					id,
+					CheckContent,
+					CheckSys,
+					DISAId,
+					Documentable,
+					FalseNegatives,
+					FalsePositives,
+					FixText,
+					IAControls,
+					MitigationControl,
+					Mitigations,
+					PotentialImpacts,
+					Reference,
+					Responsibility,
+					Severity,
+					SeverityOverrideGuidance,
+					ThirdPartyTools,
+					Title,
+					VULNGroupId,
+					VULNId,
+					Version,
+					VulnDiscussion,
+					Weight,
+					CWEId,
+					LegacyIds
+				FROM STIGCheck
+				WHERE STIGId = ?1"
+		)?;
+
+		let stigchecks: Vec<StigCheck> = stmt_check.query_map([stig.id], |row| {
+			Ok(StigCheck {
+				id: row.get::<_, u32>(0)?,
+				check_content: row.get::<_, String>(1)?,
+				check_sys: row.get::<_, String>(2)?,
+				disa_id: row.get::<_, String>(3)?,
+				documentable: row.get::<_, bool>(4)?,
+				false_negatives: row.get::<_, String>(5)?,
+				false_positives: row.get::<_, String>(6)?,
+				fix_text: row.get::<_, String>(7)?,
+				ia_controls: row.get::<_, String>(8)?,
+				mitigation_control: row.get::<_, String>(9)?,
+				mitigations: row.get::<_, String>(10)?,
+				potential_impacts: row.get::<_, String>(11)?,
+				reference: row.get::<_, String>(12)?,
+				responsibility: row.get::<_, String>(13)?,
+				stig_id: stig.id,
+				severity: row.get::<_, String>(14)?,
+				severity_override_guidance: row.get::<_, String>(15)?,
+				third_party_tools: row.get::<_, String>(16)?,
+				title: row.get::<_, String>(17)?,
+				vuln_group_id: row.get::<_, String>(18)?,
+				vuln_id: row.get::<_, String>(19)?,
+				version: row.get::<_, String>(20)?,
+				vuln_discussion: row.get::<_, String>(21)?,
+				weight: row.get::<_, f32>(22)?,
+				cwe_id: row.get::<_, u32>(23)?,
+				legacy_ids: row.get::<_, String>(24)?
+			})
+		})?
+		.filter_map(std::result::Result::ok)
+		.collect(); // *** This is the crucial step: collecting the iterator into a Vec;
+
+		for stigcheck in stigchecks {
+			let mut legacy_ids: Vec<serde_json::Value> = Vec::new();
+			for lid in stigcheck.legacy_ids.split(",") {
+				legacy_ids.push(json!(lid));
+			}
+
+			let mut stmt_ccis = conn.prepare(
+			"SELECT CCIId FROM MapSTIGCheckCCI WHERE STIGCheckId = ?1")?;
+
+			let ccis: Vec<serde_json::Value> = stmt_ccis.query_map([stig.id], |row| {
+				Ok(json!(row.get::<_, String>(0)?))
+			})?
+			.filter_map(std::result::Result::ok)
+			.collect();
+			let mut status: String = "not_reviewed".to_string();
+			let mut finding_details: String = String::new();
+			if ids.contains(&stigcheck.disa_id) {
+				status = "open".to_string();
+				finding_details = "|organization| identified findings against this check.".to_string();
+			}
+
+			let check = json!({
+				"uuid": Uuid::new_v4().to_string(),
+				"stig_uuid": stig_uuid,
+				"target_key": null,
+				"stig_ref": null,
+				"group_id": stigcheck.vuln_id,
+				"rule_id": stigcheck.disa_id.replace("_rule", ""),
+				"rule_id_src": stigcheck.disa_id,
+				"weight": format!("{:1}", stigcheck.weight),
+				"classification": "Unclassified",
+				"severity": stigcheck.severity,
+				"rule_version": stigcheck.version,
+				"group_title": stigcheck.title,
+				"rule_title": stigcheck.title,
+				"fix_text": stigcheck.fix_text,
+				"false_positives": stigcheck.false_positives,
+				"false_negatives": stigcheck.false_negatives,
+				"discussion": stigcheck.vuln_discussion,
+				"check_content": stigcheck.check_content,
+				"documentable": stigcheck.documentable.to_string(),
+				"mitigations": stigcheck.mitigations,
+				"potential_impacts": stigcheck.potential_impacts,
+				"third_party_tools": stigcheck.third_party_tools,
+				"mitigation_control": stigcheck.mitigation_control,
+				"responsibility": stigcheck.responsibility,
+				"security_override_guidance": stigcheck.severity_override_guidance,
+				"ia_controls": stigcheck.ia_controls,
+				"check_content_ref": {
+					"href": format!("{}.xml", stig.stig_id),
+					"name": "M"
+				},
+				"legacy_ids": legacy_ids,
+				"ccis": ccis,
+				"group_tree": [
+					{
+						"id": stigcheck.vuln_id,
+						"title": stigcheck.vuln_group_id,
+						"description": "<GroupDescription></GroupDescription>"
+					}
+				],
+				"createdAt": Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+				"updatedAt": Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+				"STIGUuid": stig_uuid,
+				"status": status,
+				"overrides": {},
+				"comments": "",
+				"finding_details": finding_details,
+				"srg_id": stigcheck.vuln_group_id
+			});
+			result_checks.push(check);
+		}
+
+		let result_stig = json!({
+			"stig_name": stig.title,
+			"display_name": stig.title.replace("Security Technical Implementation Guide", "").replace("Security Requirements Guide", ""),
+			"stig_id": stig.stig_id,
+			"release_info": stig.release,
+			"version": stig.version,
+			"uuid": stig_uuid,
+			"reference_identifier": stig.identifier,
+			"size": result_checks.len(),
+			"rules": result_checks
+		});
+
+		result_stigs.push(result_stig);
+	}
 
     let json = json!({
-        "title": "|projName|",
+        "title": "|projName| Checklist",
 		"id": Uuid::new_v4().to_string(),
        
-	    "stigs": [
-			{
-				"stig_name": "Application Security and Development Security Technical Implementation Guide",
-				"display_name": "Application Security and Development",
-				"stig_id": "Application_Security_Development_STIG",
-				"release_info": "Release: 3 Benchmark Date: 02 Apr 2025",
-				"version": "6",
-				"uuid": "9ca7466e-ca17-4b75-b376-4cce9987f1f8",
-				"reference_identifier": "4093",
-				"size": result.len(),
-				"rules": result
-			}
-		],
+	    "stigs": result_stigs,
 		"active": true,
 		"mode": 1, 
 		"has_path": false, 
 		"target_data": {
 			"target_type": "Computing",
-			"host_name": "",
+			"host_name": "|projName|",
 			"ip_address": "",
 			"mac_address": "",
 			"fqdn": "",
