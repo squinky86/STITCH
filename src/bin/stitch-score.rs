@@ -9,6 +9,9 @@ use cvss::v3::Base;
 use cvss::v4::Vector;
 use rusqlite::{params, Connection};
 use std::{str::FromStr, collections::HashMap};
+use serde_json::json;
+use chrono::Utc;
+use uuid::Uuid;
 
 fn mean_impact(iter: impl Iterator<Item = String>, affects: bool) -> String {
 	if !affects {
@@ -173,24 +176,114 @@ struct Args {
 	/// Verbose output of how the scoring is done
 	#[arg(short, long)]
 	pub verbose: bool,
+
+    /// Export STIG checks as a CKLB JSON file (input should be comma-separated SV IDs)
+    #[arg(short = 'j', long)]
+    pub export_json: bool,
+}
+
+fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
+    let conn = Connection::open(db_path)
+        .with_context(|| format!("Failed to open database file: {}", db_path))?;
+
+    let ids: Vec<String> = stig_ids.split(',').map(|s| s.replace("ULE", "ule").replace("R", "r")).collect();
+    
+    let mut stmt = conn.prepare(
+		"SELECT sc.DISAId, sc.VULNId, sc.Title, sc.Severity, sc.CheckContent, sc.FixText, sc.VulnDiscussion, s.name, s.version 
+			FROM STIGCheck sc 
+			JOIN STIG s ON sc.STIGId = s.id"
+	)?;
+
+	let result: Vec<serde_json::Value> = stmt.query_map([], |row| {
+		let disa_id = row.get::<_, String>(0)?;
+		Ok(json!({
+			"uuid": Uuid::new_v4().to_string(),
+			"stig_uuid": "9ca7466e-ca17-4b75-b376-4cce9987f1f8",
+			"Vuln_Num": row.get::<_, String>(1)?,
+			"Rule_ID": disa_id,
+			"Rule_Title": row.get::<_, String>(2)?,
+			"Rule_Ver": row.get::<_, String>(8)?,
+			"Severity": row.get::<_, String>(3)?,
+			"Status": if ids.contains(&disa_id) {
+				"Open"
+			} else {
+				"Not_Reviewed"
+			},
+			"Finding_Details": format!("A software assurance review identified findings against STIG check {}.", disa_id),
+			"Comments": "",
+			"Details": row.get::<_, String>(5)?, // VulnDiscussion
+			"Fix_Text": row.get::<_, String>(4)?,
+			"Timestamp": Utc::now().to_rfc3339(),
+			"StigId": row.get::<_, String>(6)?,
+			"StigVersion": row.get::<_, String>(7)?
+		}))
+	})?
+    .filter_map(std::result::Result::ok)
+	.collect(); // *** This is the crucial step: collecting the iterator into a Vec;
+
+    let json = json!({
+        "title": "|projName|",
+		"id": Uuid::new_v4().to_string(),
+       
+	    "stigs": [
+			{
+				"stig_name": "Application Security and Development Security Technical Implementation Guide",
+				"display_name": "Application Security and Development",
+				"stig_id": "Application_Security_Development_STIG",
+				"release_info": "Release: 3 Benchmark Date: 02 Apr 2025",
+				"version": "6",
+				"uuid": "9ca7466e-ca17-4b75-b376-4cce9987f1f8",
+				"reference_identifier": "4093",
+				"size": result.len(),
+				"rules": result
+			}
+		],
+		"active": true,
+		"mode": 1, 
+		"has_path": false, 
+		"target_data": {
+			"target_type": "Computing",
+			"host_name": "",
+			"ip_address": "",
+			"mac_address": "",
+			"fqdn": "",
+			"comments": "",
+			"role": "None", 
+			"is_web_database": false,
+			"technology_area": "",
+			"web_db_site": "",
+			"web_db_instance": "", 
+			"classification": null
+		},              
+		"cklb_version": "1.0",
+		"cklb_generator": "STITCH 0.1.0"
+    });
+
+    println!("{}", serde_json::to_string_pretty(&json)?);
+    Ok(())
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
     let input = args.input.trim().to_uppercase();
 
-    // Determine if the input is a vector string or a CVE identifier
-    if input.starts_with("CVSS:") {
+    if args.export_json {
+        if input.starts_with("SV-") {
+            export_stig_json(&input, &args.db)?;
+        } else {
+            anyhow::bail!("For JSON export, input must be a comma-separated list of STIG rule IDs (starting with 'SV-')");
+        }
+    } else if input.starts_with("CVSS:") {
         score_from_vector(&input, &args)?;
     } else if input.starts_with("CVE-") {
         score_from_cve(&input, &args.db, &args)?;
     } else if input.starts_with("CWE-") {
-		score_from_cwe(&input, &args.db, &args)?;
-	} else if input.starts_with("CWES") {
-		score_cwes(&args.db, &args)?;
-	} else if input.starts_with("SV-") {
-		score_from_stig(&input, &args.db, &args)?;
-	} else {
+        score_from_cwe(&input, &args.db, &args)?;
+    } else if input.starts_with("CWES") {
+        score_cwes(&args.db, &args)?;
+    } else if input.starts_with("SV-") {
+        score_from_stig(&input, &args.db, &args)?;
+    } else {
         anyhow::bail!("Input must be a valid CVSS vector string (starting with 'CVSS:') or a CVE identifier (starting with 'CVE-') or a CWE (starting with 'CWE-').");
     }
 
