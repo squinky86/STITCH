@@ -13,6 +13,91 @@ use serde_json::json;
 use chrono::{SecondsFormat, Utc};
 use uuid::Uuid;
 
+fn get_controls_from_controls(controls: Vec<String>, db_path: &str) -> Result<()> {
+	let conn = Connection::open(db_path)
+        .with_context(|| format!("Failed to open database file: {}", db_path))?;
+
+	let placeholders = controls.iter()
+	.map(|_| "?")
+	.collect::<Vec<_>>()
+	.join(", ");
+	let query_controls = format!("
+		SELECT DISTINCT
+			c.number as control_number,
+			c.name as control_name,
+			c.description as control_description,
+			f.abbr as family_abbreviation,
+			f.name as family_name,
+			c.id as control_id
+		FROM RMFCCI rc
+		JOIN RMFControl c ON rc.RMFControlId = c.id
+		JOIN RMFFamily f ON c.RMFFamilyId = f.id
+		WHERE c.number IN ({})", placeholders);
+
+	// Prepare statement to find all CCIs for a given control
+	let mut stmt_ccis = conn.prepare("SELECT id FROM RMFCCI WHERE RMFControlId = ?1")?;
+		
+	let mut stmt_controls = conn.prepare(&query_controls)?;
+
+	let mut unique_controls: HashMap<u32, serde_json::Value> = HashMap::new();
+	
+	let rows = stmt_controls.query_map(rusqlite::params_from_iter(controls), |row: &Row| {
+		let control_number: String = row.get(0)?;
+		let control_name: String = row.get(1)?;
+		let control_desc: String = row.get(2)?;
+		let family_abbr: String = row.get(3)?;
+		let family_name: String = row.get(4)?;
+		let control_id: u32 = row.get(5)?;
+		
+		Ok((control_id, json!({
+			"control": control_number,
+			"name": control_name,
+			"description": control_desc,
+			"family": {
+				"abbreviation": family_abbr,
+				"name": family_name
+			}
+		})))
+	})?;
+	
+	for result in rows {
+		if let Ok((control_id, control_json)) = result {
+			// Add to map. If already present, it's just ignored.
+			unique_controls.entry(control_id).or_insert(control_json);
+		}
+	}
+
+	let mut output_controls: Vec<serde_json::Value> = Vec::new();
+
+	for (control_id, mut control_json) in unique_controls {
+		// Find all CCIs for this control_id
+		let cci_rows = stmt_ccis.query_map([control_id], |row| {
+			let cci_id: u32 = row.get(0)?;
+			Ok(json!(format!("CCI-{:06}", cci_id)))
+		})?;
+		
+		// Collect the CCIs into a JSON array
+		let cci_list: Vec<serde_json::Value> = cci_rows.filter_map(Result::ok).collect();
+
+		// Add the control_id and cci_list to the JSON object
+		if let Some(obj) = control_json.as_object_mut() {
+			obj.insert("control_id".to_string(), json!(control_id));
+			obj.insert("ccis".to_string(), json!(cci_list));
+		}
+
+		output_controls.push(control_json);
+	}
+	
+	let result = json!({
+		"timestamp": Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+		"controls": output_controls // This is now an array of controls, each with its own CCI list
+	});
+	
+	println!("{}", serde_json::to_string_pretty(&result)?);
+
+	Ok(())
+}
+
 fn get_controls_from_ccis(ccis: Vec<u32>, db_path: &str) -> Result<()> {
 	let conn = Connection::open(db_path)
         .with_context(|| format!("Failed to open database file: {}", db_path))?;
@@ -44,10 +129,8 @@ fn get_controls_from_ccis(ccis: Vec<u32>, db_path: &str) -> Result<()> {
 	);
 	let mut stmt_ccis = conn.prepare(&sql_ccis)?;
 
-	// Use a HashMap to store unique controls found (by control_id)
 	let mut unique_controls: HashMap<u32, serde_json::Value> = HashMap::new();
 	
-	// --- Part 1: Iterate through input CCIs to find unique controls ---
 	for cci_id in &ccis {
 		let rows = stmt_controls.query_map([cci_id], |row: &Row| {
 			let control_number: String = row.get(0)?;
@@ -76,7 +159,6 @@ fn get_controls_from_ccis(ccis: Vec<u32>, db_path: &str) -> Result<()> {
 		}
 	}
 
-	// --- Part 2: For each unique control, find all its CCIs and build output ---
 	let mut output_controls: Vec<serde_json::Value> = Vec::new();
 
 	for (control_id, mut control_json) in unique_controls {
@@ -513,7 +595,13 @@ fn main() -> Result<()> {
             .collect();
             
         _ = get_controls_from_ccis(ccis, &args.db);
-    } else if input.starts_with("CVSS:") {
+    } else if args.controls {
+		let controls: Vec<String> = input.split(",")
+            .map(|s| s.to_ascii_uppercase())
+            .collect();
+            
+        _ = get_controls_from_controls(controls, &args.db);
+	} else if input.starts_with("CVSS:") {
         score_from_vector(&input, &args)?;
     } else if input.starts_with("CVE-") {
         score_from_cve(&input, &args.db, &args)?;

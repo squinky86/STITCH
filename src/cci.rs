@@ -10,8 +10,29 @@ use rusqlite::{params, Connection};
 use tokio::fs;
 use tempfile::NamedTempFile;
 use regex::Regex;
-use once_cell::sync::Lazy;
+use lazy_static::lazy_static;
 use indicatif::{ProgressBar,ProgressStyle};
+
+// Use lazy_static to compile the regex only once for efficiency.
+lazy_static! {
+    // This regex is designed to capture the RMF components.
+    //
+    // Breakdown:
+    // ^                - Anchor to the start of the string.
+    // ([A-Z]{2})      - Capture Group 1: The RMF Family (exactly two uppercase letters).
+    // \s*-\s* - A hyphen, allowing for surrounding whitespace (e.g., "AC - 1").
+    // (\d+)            - Capture Group 2: The RMF Control Number (one or more digits, e.g., "1", "03").
+    // (?: ... )?       - An optional, non-capturing group for the enhancement.
+    //   \s* - Allows for whitespace between the control number and the parenthesis.
+    //   \(             - A literal opening parenthesis.
+    //   \s* - Allows for whitespace inside the parenthesis (e.g., "( 1 )").
+    //   (\d+)          - Capture Group 3: The Enhancement Number (one or more digits, e.g., "1", "04").
+    //   \s* - Allows for whitespace before the closing parenthesis.
+    //   \)             - A literal closing parenthesis.
+    static ref RMF_REGEX: Regex = Regex::new(
+        r"^([A-Z]{2})\s*-\s*(\d+)(?:\s*\(\s*(\d+)\s*\))?"
+    ).unwrap();
+}
 
 pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
 	// RMF CCI Data
@@ -29,30 +50,43 @@ pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
     Ok(())
 }
 
-fn extract_control_identifier(input: &str) -> Option<String> {
-    // Regex to match the base control and optional single parenthetical enhancement
-	static BASE_CONTROL_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^([A-Z]{2,3}-\d{1,2}(?:\(\d{1,2}\))?)").unwrap()
-    });
-	// Regex to match and capture zero-padded enhancements like (01), (02), etc.
-    static ZERO_PADDED_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"\(0(\d)\)$").unwrap()
-    });
-    
-    // Find the match
-    let captures = BASE_CONTROL_RE.captures(input)?;
-    
-    // Extract the content of the first capturing group (index 1)
-    let control_part = captures.get(1)?.as_str().to_string();
+fn extract_control_identifier(input: &str) -> String {
+    // RMF_REGEX.captures() attempts to match the regex at the beginning of the string.
+    if let Some(caps) = RMF_REGEX.captures(input) {
+        // --- Get RMF Family (Group 1) ---
+        // We can unwrap() because a successful match guarantees Group 1 exists.
+        let family = caps.get(1).unwrap().as_str();
 
-    if let Some(captures) = ZERO_PADDED_RE.captures(&control_part) {
-        // If it matches (0N), replace the end of the string with (N)
-        let digit = captures.get(1).unwrap().as_str();
-        let stripped_control = control_part.strip_suffix(&captures.get(0).unwrap().as_str()).unwrap();
-        return Some(format!("{}({})", stripped_control, digit));
+        // --- Get RMF Control Number (Group 2) ---
+        // We also know Group 2 is guaranteed to exist.
+        let control_num_str = caps.get(2).unwrap().as_str();
+        
+        // Parse the string to a number (e.g., u32). This beautifully
+        // handles normalization (e.g., "03" becomes 3).
+        // We can unwrap() the parse because the regex (\d+) guarantees it's a valid number.
+        let control_num: u32 = control_num_str.parse().unwrap();
+
+        // Start building the result string using the normalized number.
+        let mut result = format!("{}-{}", family, control_num);
+
+        // --- Get Optional RMF Enhancement (Group 3) ---
+        // Group 3 is optional, so we must check if it was captured.
+        if let Some(enhancement_match) = caps.get(3) {
+            let enhancement_str = enhancement_match.as_str();
+            
+            // Parse to normalize the enhancement number (e.g., "01" becomes 1).
+            let enhancement_num: u32 = enhancement_str.parse().unwrap();
+            
+            // Append the formatted enhancement directly to the result string.
+            result.push_str(&format!("({})", enhancement_num));
+        }
+
+        // Return the final, formatted string.
+        result
+    } else {
+        // If the regex did not match the start of the string, return an empty string.
+        String::new()
     }
-    
-    Some(control_part)
 }
 
 async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection) -> Result<()> {
