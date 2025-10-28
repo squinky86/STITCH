@@ -8,6 +8,7 @@ use rusqlite::{params, Connection};
 use tokio::fs;
 use tempfile::NamedTempFile;
 use anyhow::{Context, Result};
+use indicatif::{ProgressBar,ProgressStyle};
 
 /// Public database structures
 #[derive(Debug)]
@@ -322,9 +323,7 @@ pub async fn process_stig(conn: &Connection, args: &Args) -> Result<()> {
     p("✓", true);
 
     // Parse STIG XML and populate database
-	p("Parsing DISA STIG XML and populating database…", false);
 	stig_parse_and_populate_database(&mut stig_temp_xml, &conn).await?;
-	p("✓", true);
 
     Ok(())
 }
@@ -335,7 +334,16 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
         .context("Failed to read STIG XML file")?;
 
     let reader = std::io::Cursor::new(xml_content);
+	let bar = ProgressBar::new(100);
+	bar.set_style(ProgressStyle::default_bar()
+    	.template("{prefix} {bar:20.cyan/blue} {msg}")
+    	.expect("Failed to create progress style"));
+	bar.set_prefix("Inserting STIG Checks…");
     let benchmark = parse_stig_xml_reader(reader)?;
+    let total_rules = benchmark.groups.iter().map(|group| group.rules.len() as u64).sum();
+	bar.set_length(total_rules);
+	let mut on: u32 = 0;
+	bar.set_message(format!("{}/{}", on, total_rules));
 
 	//create the new STIG
 	let _ = conn.execute(
@@ -355,6 +363,9 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 		for rule in &group.rules {
 			let check = rule.check.as_ref().ok_or_else(|| anyhow::anyhow!("Missing check for rule {}", rule.id))?;
 			let desc = rule.parse_description();
+			on += 1;
+			bar.set_message(format!("{}/{}", on, total_rules));
+			bar.inc(1);
 			conn.execute(
 				"INSERT INTO STIGCheck (
 					CheckContent, CheckSys, DISAId, Documentable, 
@@ -407,5 +418,7 @@ async fn stig_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connec
 			}
 		}
 	}
+
+	bar.finish_with_message(format!("✓ ({})", total_rules));
 	Ok(())
 }
