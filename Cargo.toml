@@ -18,7 +18,7 @@ reqwest = { version = "0.12", features = ["stream"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 quick-xml = { version = "0.38", features = ["serialize"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_yaml = "0.9"
+serde_yml = "0.0.12"
 serde_json = "1.0"
 zip = "6.0"
 anyhow = "1.0"
