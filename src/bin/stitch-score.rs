@@ -657,7 +657,8 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
 
     let mut stmt = conn.prepare(
         "SELECT
-            attackVector,
+            id,
+			attackVector,
 			attackComplexity,
 			attackRequirements,
 			privilegesRequired,
@@ -697,59 +698,59 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
     // Query the database for the CVE's metrics
     let cve_data = stmt.query_row(params![cve_id.to_uppercase()], |row| {
         Ok((
-            row.get::<_, String>(0)?, //AV
-			row.get::<_, String>(1)?, //AC
-			row.get::<_, String>(2)?, //AT
-            row.get::<_, String>(3)?, //PR
-			row.get::<_, String>(4)?, //UI
-			row.get::<_, String>(5)?, //VC
-            row.get::<_, String>(6)?, //VI
-			row.get::<_, String>(7)?, //VA
-			row.get::<_, String>(8)?, //SC
-            row.get::<_, String>(9)?, //SI
-			row.get::<_, String>(10)?, //SA
-			row.get::<_, String>(11)?, //E
-			row.get::<_, String>(12)?, //CR
-			row.get::<_, String>(13)?, //IR
-			row.get::<_, String>(14)?, //AR
-			row.get::<_, String>(15)?, // MAV
-			row.get::<_, String>(16)?, // MAC
-			row.get::<_, String>(17)?, // MAT
-			row.get::<_, String>(18)?, // MPR
-			row.get::<_, String>(19)?, // MUI
-			row.get::<_, String>(20)?, // MVC
-			row.get::<_, String>(21)?, // MVI
-			row.get::<_, String>(22)?, // MVA
-			row.get::<_, String>(23)?, // MSC
-			row.get::<_, String>(24)?, // MSI
-			row.get::<_, String>(25)?, // MSA
-			row.get::<_, String>(26)?, // S
-			row.get::<_, String>(27)?, // AU
-			row.get::<_, String>(28)?, // U
-			row.get::<_, String>(29)?, // R
-			row.get::<_, String>(30)?, // V
-			row.get::<_, String>(31)?, // RE
-			row.get::<_, u32>(32)?,
+			row.get::<_, u32>(0)?, // id
+            row.get::<_, String>(1)?, // AV
+			row.get::<_, String>(2)?, // AC
+			row.get::<_, String>(3)?, // AT
+            row.get::<_, String>(4)?, // PR
+			row.get::<_, String>(5)?, // UI
+			row.get::<_, String>(6)?, // VC
+            row.get::<_, String>(7)?, // VI
+			row.get::<_, String>(8)?, // VA
+			row.get::<_, String>(9)?, // SC
+            row.get::<_, String>(10)?, // SI
+			row.get::<_, String>(11)?, // SA
+			row.get::<_, String>(12)?, // E
+			row.get::<_, String>(13)?, // CR
+			row.get::<_, String>(14)?, // IR
+			row.get::<_, String>(15)?, // AR
+			row.get::<_, String>(16)?, // MAV
+			row.get::<_, String>(17)?, // MAC
+			row.get::<_, String>(18)?, // MAT
+			row.get::<_, String>(19)?, // MPR
+			row.get::<_, String>(20)?, // MUI
+			row.get::<_, String>(21)?, // MVC
+			row.get::<_, String>(22)?, // MVI
+			row.get::<_, String>(23)?, // MVA
+			row.get::<_, String>(24)?, // MSC
+			row.get::<_, String>(25)?, // MSI
+			row.get::<_, String>(26)?, // MSA
+			row.get::<_, String>(27)?, // S
+			row.get::<_, String>(28)?, // AU
+			row.get::<_, String>(29)?, // U
+			row.get::<_, String>(30)?, // R
+			row.get::<_, String>(31)?, // V
+			row.get::<_, String>(32)?, // RE
+			row.get::<_, u32>(33)?, // score version
         ))
     }).with_context(|| format!("Could not find CVE '{}' in the database.", cve_id))?;
 
     // Map the database's full metric names to their CVSS 4.0 single-letter abbreviations
     let vector_string = format!(
         "CVSS:4.0/AV:{}/AC:{}/AT:{}/PR:{}/UI:{}/VC:{}/VI:{}/VA:{}/SC:{}/SI:{}/SA:{}/E:{}", // /CR:{}/IR:{}/AR:{}/MAV:{}/MAC:{}/MAT:{}/MPR:{}/MUI:{}/MVC:{}/MVI:{}/MVA:{}/MSC:{}/MSI:{}/MSA:{}/S:{}/AU:{}/U:{}/R:{}/V:{}/RE:{}",
-        map_metric(&cve_data.0)?,
-		map_metric(&cve_data.1)?,
+        map_metric(&cve_data.1)?,
 		map_metric(&cve_data.2)?,
-        map_metric(&cve_data.3)?,
-		map_metric(&cve_data.4)?,
+		map_metric(&cve_data.3)?,
+        map_metric(&cve_data.4)?,
 		map_metric(&cve_data.5)?,
-        map_metric(&cve_data.6)?,
-		map_metric(&cve_data.7)?,
+		map_metric(&cve_data.6)?,
+        map_metric(&cve_data.7)?,
 		map_metric(&cve_data.8)?,
-        map_metric(&cve_data.9)?,
-		map_metric(&cve_data.10)?,
+		map_metric(&cve_data.9)?,
+        map_metric(&cve_data.10)?,
 		map_metric(&cve_data.11)?,
-		/*map_metric(&cve_data.12)?,
-		map_metric(&cve_data.13)?,
+		map_metric(&cve_data.12)?,
+		/*map_metric(&cve_data.13)?,
 		map_metric(&cve_data.14)?,
 		map_metric(&cve_data.15)?,
 		map_metric(&cve_data.16)?,
@@ -767,13 +768,81 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
 		map_metric(&cve_data.28)?,
 		map_metric(&cve_data.29)?,
 		map_metric(&cve_data.30)?,
-		map_metric(&cve_data.31)?*/
+		map_metric(&cve_data.31)?,
+		map_metric(&cve_data.32)?*/
     );
 
 	if args.verbose {
     	println!("Found CVE: {} using CVSS Version {}. Constructing CVSS 4.0 vector from database: {}.", cve_id, cve_data.32, vector_string);
 	}
-    score_from_vector(&vector_string, &args)?;
+
+	let cwe_data: Vec<CWEDetails> = {
+        let mut stmt_cwe = conn.prepare(
+            "SELECT
+				Weakness.id,
+                Weakness.name,
+                abstraction,
+                category,
+                view,
+                confidentiality,
+                integrity,
+                availability,
+                DISAId,
+                Severity,
+                number,
+                RMFCCI.id
+            FROM Weakness JOIN STIGCheck ON STIGCheck.id = Weakness.STIGCheckId
+            JOIN MapSTIGCheckCCI ON STIGCheck.id = MapSTIGCheckCCI.STIGCheckId
+            JOIN RMFCCI ON MapSTIGCheckCCI.CCIId = RMFCCI.id
+            JOIN RMFControl ON RMFCCI.RMFControlId = RMFControl.id
+            WHERE Weakness.id IN (SELECT WeaknessId FROM MapVulnerabilityWeakness WHERE VulnerabilityId = ?1)",
+        )?;
+
+        let cwe_data_elements = stmt_cwe.query_map(params![cve_data.0], |row| {
+            Ok(CWEDetails {
+                id: row.get::<_, u32>(0)?, //id
+                name: row.get::<_, String>(1)?, //name
+                abstraction: row.get::<_, String>(2)?, //abstraction
+                category: row.get::<_, bool>(3)?, //category
+                view: row.get::<_, bool>(4)?, //view
+                confidentiality: row.get::<_, bool>(5)?, //confidentiality
+                integrity: row.get::<_, bool>(6)?, //integrity
+                availability: row.get::<_, bool>(7)?, //availability
+                disaid: row.get::<_, String>(8)?, //DISAId
+                severity: row.get::<_, String>(9)?, //severity
+                control: row.get::<_, String>(10)?, //RMF Control
+                cci: row.get::<_, u32>(11)?.to_string(), //CCI
+            })
+        })?;
+
+		let cwe_data_result: rusqlite::Result<Vec<CWEDetails>> = cwe_data_elements.collect();
+        
+        cwe_data_result.with_context(|| "No records found in the database.")?
+	};
+
+	let details: CWEDetails;
+	if cwe_data.len() == 0 {
+		details = CWEDetails {
+			id: 710,
+			name: "Improper Adherence to Coding Standards".to_string(),
+			abstraction: "Pillar".to_string(),
+			category: false,
+			view: false,
+			confidentiality: false,
+			integrity: false,
+			availability: false,
+			disaid: "SV-222653r961863_rule".to_string(),
+			severity: "low".to_string(),
+			control: "SA-15".to_string(),
+			cci: "CCI-3233".to_string(),
+		}
+	}
+	else {
+		details = cwe_data.first().unwrap().clone();
+	}
+
+	print!("{},\"{}\",{},{},{},{},\"{}\",\"{}\",", details.id, details.name, details.abstraction, vector_string, details.disaid, details.severity, details.control, details.cci);
+	score_from_vector(&vector_string, &args)?;
 
     Ok(())
 }

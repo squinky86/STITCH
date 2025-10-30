@@ -4,7 +4,7 @@ STITCH, the Scoring Tool for Integrated Threat and Compliance Heuristics, is a R
 
 STITCH is derived from the Public Domain "JFAC Scoring Procedure," a scoring estimation program vetted by the Joint Federated Assurance Center (JFAC).
 
-The current scoring process is documented in [docs/scoring.md](docs/scoring.md).
+The current scoring process is documented in [doc/scoring.md](doc/scoring.md).
 
 ## Acknowledgements
 
