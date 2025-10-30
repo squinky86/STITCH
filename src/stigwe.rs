@@ -51,7 +51,7 @@ async fn stigwe_parse_and_populate_database(yaml: &mut NamedTempFile, conn: &Con
         .await
         .context("Failed to read YAML file")?;
 
-    let mappings: Mappings = serde_yml::from_str(&yaml_content)
+    let mappings: Mappings = serde_yaml2::from_str(&yaml_content)
         .context("Failed to parse YAML content")?;
 
 	// Update STIGCheck CWEId where default mapping exists
