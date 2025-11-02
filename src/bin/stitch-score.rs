@@ -586,7 +586,7 @@ fn main() -> Result<()> {
         if input.starts_with("SV-") {
             export_stig_json(&input, &args.db)?;
         } else {
-            anyhow::bail!("For JSON export, input must be a comma-separated list of STIG rule IDs (starting with 'SV-')");
+            export_stig_json("", &args.db)?;
         }
     } else if args.ccis {
         let ccis: Vec<u32> = input.split(",")
