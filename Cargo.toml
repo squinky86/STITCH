@@ -30,5 +30,5 @@ lazy_static = "1.4.0"
 chrono = "0.4"
 flate2 = "1.1"
 indicatif = "0.18"
-cvss = "2.1.1"
+cvss = "2.2.0"
 uuid = { version = "1.0", features = ["v4"] }
