@@ -9,6 +9,7 @@ use cvss::v3::Base;
 use cvss::v4::Vector;
 use rusqlite::{params, Connection, Row};
 use std::{str::FromStr, collections::HashMap};
+use std::io::{self, ErrorKind};
 use serde_json::json;
 use chrono::{SecondsFormat, Utc};
 use uuid::Uuid;
@@ -1164,6 +1165,11 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> Result<()> {
 	let min_results_to_get_more = 50;
 	let min_results_to_score = 5;
+
+	if cwe_data.len() == 0 {
+		eprintln!("Invalid CWE data provided");
+		return Ok(());
+	}
 
 	let (cwe_data_flatened, rest_of_data) = cwe_data
     .split_first_mut()
