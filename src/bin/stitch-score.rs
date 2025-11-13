@@ -9,7 +9,6 @@ use cvss::v3::Base;
 use cvss::v4::Vector;
 use rusqlite::{params, Connection, Row};
 use std::{str::FromStr, collections::HashMap};
-use std::io::{self, ErrorKind};
 use serde_json::json;
 use chrono::{SecondsFormat, Utc};
 use uuid::Uuid;
