@@ -33,7 +33,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Install musl tools
-      run: apt-get install musl-tools
+      run: sudo apt install -y musl-tools
     - name: Install musl target
       # Add the static target for cross-compilation
       run: rustup target add x86_64-unknown-linux-musl
