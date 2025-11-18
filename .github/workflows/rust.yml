@@ -8,7 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  EXECUTABLES: stitch stitch-scores
+  EXECUTABLES: stitch stitch-score
 
 jobs:
   # 1. Standard CI check for building and running tests on Linux
@@ -32,6 +32,8 @@ jobs:
     needs: [test]
     steps:
     - uses: actions/checkout@v4
+    - name: Install musl tools
+      run: apt-get install musl-tools
     - name: Install musl target
       # Add the static target for cross-compilation
       run: rustup target add x86_64-unknown-linux-musl
