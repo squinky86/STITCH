@@ -1,4 +1,4 @@
-name: Rust
+name: Rust CI & Release Builds
 
 on:
   push:
@@ -8,15 +8,92 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  EXECUTABLES: stitch stitch-scores
 
 jobs:
-  build:
-
+  # 1. Standard CI check for building and running tests on Linux
+  test:
+    name: Run Tests
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: target/debug/stitch
+    - name: Build and Test
+      # Standard build and test execution
+      run: |
+        cargo build --verbose
+        # Testing one of the executables as an example
+        target/debug/stitch
+
+  # 2. Build for Linux MUSL (static linking)
+  linux_musl_release:
+    name: Linux MUSL Release
+    runs-on: ubuntu-latest
+    # Ensure tests pass before building release artifacts
+    needs: [test]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install musl target
+      # Add the static target for cross-compilation
+      run: rustup target add x86_64-unknown-linux-musl
+    - name: Build MUSL Release
+      # Compile using the installed target
+      run: cargo build --release --target x86_64-unknown-linux-musl
+    - name: Package MUSL Binaries
+      # Create a directory and tar.gz package containing all executables
+      run: |
+        ARTIFACT_DIR=target/x86_64-unknown-linux-musl/release
+        ARTIFACT_NAME=rust-binaries-x86_64-unknown-linux-musl
+        mkdir $ARTIFACT_NAME
+        
+        # Loop through all specified executables and copy them into the package folder
+        for exec in ${{ env.EXECUTABLES }}; do
+          echo "Copying $exec from $ARTIFACT_DIR"
+          cp $ARTIFACT_DIR/$exec $ARTIFACT_NAME/
+        done
+        
+        # Use tar.gz for Linux packaging
+        tar -czvf $ARTIFACT_NAME.tar.gz $ARTIFACT_NAME
+    - name: Upload Linux MUSL Artifact
+      # Upload the package to the workflow run artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-binaries-linux-musl
+        path: rust-binaries-x86_64-unknown-linux-musl.tar.gz
+
+  # 3. Build for Windows MSVC
+  windows_release:
+    name: Windows MSVC Release
+    # Use a Windows runner
+    runs-on: windows-latest
+    needs: [test]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build Windows Release
+      # Default target x86_64-pc-windows-msvc is used
+      run: cargo build --release
+    - name: Package Windows Binaries
+      # Use PowerShell for Windows commands
+      shell: powershell
+      run: |
+        $ARTIFACT_DIR="target\release"
+        $ARTIFACT_NAME="rust-binaries-x86_64-pc-windows-msvc"
+        
+        # Create directory
+        mkdir $ARTIFACT_NAME
+        
+        # Loop through all specified executables, add the .exe suffix, and copy them
+        $executables = "${{ env.EXECUTABLES }}".Split(" ")
+        foreach ($executable in $executables) {
+            $sourcePath = Join-Path $ARTIFACT_DIR "$executable.exe"
+            Write-Host "Copying $sourcePath"
+            Copy-Item -Path $sourcePath -Destination $ARTIFACT_NAME
+        }
+        
+        # Zip the directory using Compress-Archive (PowerShell's built-in zip)
+        Compress-Archive -Path $ARTIFACT_NAME -DestinationPath "$ARTIFACT_NAME.zip"
+    - name: Upload Windows Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-binaries-windows-msvc
+        path: rust-binaries-x86_64-pc-windows-msvc.zip
+        
