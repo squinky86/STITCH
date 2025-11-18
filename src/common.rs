@@ -10,6 +10,9 @@ use clap::Parser;
 use futures_util::{StreamExt};
 use std::io::{self,Write};
 use indicatif::{ProgressBar,ProgressStyle};
+use tokio::time::{sleep, Duration};
+
+const MAX_RETRIES: u32 = 5;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -39,11 +42,36 @@ pub async fn download_file(url: &str, file: &mut NamedTempFile, silent: bool, pr
         p(format!("Connecting to: {}", url).as_str(), true);
     }
 
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .context("Failed to download CWE XML")?;
+    let mut retries = 0;
+    let response = loop {
+        let response = client.get(url).send().await;
+
+        match response {
+            Ok(res) => {
+                if res.status().is_server_error() {
+                    retries += 1;
+                    if retries < MAX_RETRIES {
+                        p(format!("Download failed with status {} (retry {}/{}), retrying in 5 seconds...", res.status(), retries, MAX_RETRIES).as_str(), true);
+                        sleep(Duration::from_secs(5)).await;
+                        continue;
+                    } else {
+                        return Err(anyhow::anyhow!("Failed to download {}: Max retries exceeded.", url));
+                    }
+                }
+                break res;
+            }
+            Err(e) => {
+                retries += 1;
+                if retries < MAX_RETRIES {
+                    p(format!("Download failed: {} (retry {}/{}), retrying in 5 seconds...", e, retries, MAX_RETRIES).as_str(), true);
+                    sleep(Duration::from_secs(5)).await;
+                    continue;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to download {}: Max retries exceeded. Last error: {}", url, e));
+                }
+            }
+        }
+    };
 
     let total_size = response.content_length().unwrap_or(0);
     if args.verbose && total_size > 0 {
