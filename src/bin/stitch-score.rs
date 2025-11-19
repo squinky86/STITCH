@@ -737,7 +737,7 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
 
     // Map the database's full metric names to their CVSS 4.0 single-letter abbreviations
     let vector_string = format!(
-        "CVSS:4.0/AV:{}/AC:{}/AT:{}/PR:{}/UI:{}/VC:{}/VI:{}/VA:{}/SC:{}/SI:{}/SA:{}/E:{}", // /CR:{}/IR:{}/AR:{}/MAV:{}/MAC:{}/MAT:{}/MPR:{}/MUI:{}/MVC:{}/MVI:{}/MVA:{}/MSC:{}/MSI:{}/MSA:{}/S:{}/AU:{}/U:{}/R:{}/V:{}/RE:{}",
+        "CVSS:4.0/AV:{}/AC:{}/AT:{}/PR:{}/UI:{}/VC:{}/VI:{}/VA:{}/SC:{}/SI:{}/SA:{}", // /CR:{}/IR:{}/AR:{}/MAV:{}/MAC:{}/MAT:{}/MPR:{}/MUI:{}/MVC:{}/MVI:{}/MVA:{}/MSC:{}/MSI:{}/MSA:{}/S:{}/AU:{}/U:{}/R:{}/V:{}/RE:{}",
         map_metric(&cve_data.1)?,
 		map_metric(&cve_data.2)?,
 		map_metric(&cve_data.3)?,
@@ -749,8 +749,8 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
 		map_metric(&cve_data.9)?,
         map_metric(&cve_data.10)?,
 		map_metric(&cve_data.11)?,
-		map_metric(&cve_data.12)?,
-		/*map_metric(&cve_data.13)?,
+		/*map_metric(&cve_data.12)?,
+		map_metric(&cve_data.13)?,
 		map_metric(&cve_data.14)?,
 		map_metric(&cve_data.15)?,
 		map_metric(&cve_data.16)?,
