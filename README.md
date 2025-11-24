@@ -77,7 +77,7 @@ WHERE r.source_id = '89' AND r.nature = 'ChildOf';
 - `zip` - Archive extraction
 - `tempfile` - Temporary file handling
 - `serde` - JSON, XML, and YAML mapping
-- `serde_yaml` - serde YAML interface
+- `serde_yaml2` - serde YAML interface
 - `serde_json` - serde JSON interface
 - `futures-util` - common containers
 - `regex` - regular expression handling
@@ -86,22 +86,13 @@ WHERE r.source_id = '89' AND r.nature = 'ChildOf';
 - `indicatif` - progress bars
 - `once_cell` - lazy loading of values
 - `cvss` - CVSS 4.0 scoring
-
-## Error Handling
-
-The tool includes comprehensive error handling for:
-- Network connectivity issues
-- XML parsing errors
-- Database creation/insertion errors
-- File system errors
+- `lazy_static` - lazy loading of regexes
+- `uuid` - UUIDs for STIG generation
+- `openssl` - set to vendor mode as a subdependency for static building
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+Please submit pull requests or issues.
 
 ## Copyright and License
 
