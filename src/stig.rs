@@ -316,7 +316,7 @@ pub fn parse_stig_xml_reader<R: std::io::BufRead>(
 pub async fn process_stig(conn: &Connection, args: &Args) -> Result<()> {
     let mut stig_temp_zip = NamedTempFile::new()?;
 	let mut stig_temp_xml = NamedTempFile::new()?;
-    download_file("https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_ASD_V6R3_STIG.zip", &mut stig_temp_zip, false, "Downloading STIG XML file from DISA…".to_string(), &args).await?;
+    download_file("https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_ASD_V6R4_STIG.zip", &mut stig_temp_zip, false, "Downloading STIG XML file from DISA…".to_string(), &args).await?;
 
     p("Extracting STIG XML file…", false);
     extract_from_zip(&stig_temp_zip, &mut stig_temp_xml, ".xml", &args)?;
