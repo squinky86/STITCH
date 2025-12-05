@@ -1,17 +1,17 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-use crate::common::{download_file,extract_from_zip,p,Args};
+use crate::common::{Args, download_file, extract_from_zip, p};
 
 use anyhow::{Context, Result};
-use quick_xml::events::Event;
-use quick_xml::Reader;
-use rusqlite::{params, Connection};
-use tokio::fs;
-use tempfile::NamedTempFile;
-use regex::Regex;
+use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::lazy_static;
-use indicatif::{ProgressBar,ProgressStyle};
+use quick_xml::Reader;
+use quick_xml::events::Event;
+use regex::Regex;
+use rusqlite::{Connection, params};
+use tempfile::NamedTempFile;
+use tokio::fs;
 
 // Use lazy_static to compile the regex only once for efficiency.
 lazy_static! {
@@ -35,17 +35,24 @@ lazy_static! {
 }
 
 pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
-	// RMF CCI Data
-	let mut cci_temp_zip = NamedTempFile::new()?;
-	let mut cci_temp_xml = NamedTempFile::new()?;
-    download_file("https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/CCI+List.zip", &mut cci_temp_zip, false, "Downloading CCI XML file from DISA…".to_string(), args).await?;
+    // RMF CCI Data
+    let mut cci_temp_zip = NamedTempFile::new()?;
+    let mut cci_temp_xml = NamedTempFile::new()?;
+    download_file(
+        "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/CCI+List.zip",
+        &mut cci_temp_zip,
+        false,
+        "Downloading CCI XML file from DISA…".to_string(),
+        args,
+    )
+    .await?;
 
     p("Extracting CCI XML file…", false);
-    extract_from_zip(&cci_temp_zip, &mut cci_temp_xml, ".xml", &args)?;
+    extract_from_zip(&cci_temp_zip, &mut cci_temp_xml, ".xml", args)?;
     p("✓", true);
 
     // Parse CCI XML and populate database
-	cci_parse_and_populate_database(&mut cci_temp_xml, &conn).await?;
+    cci_parse_and_populate_database(&mut cci_temp_xml, conn).await?;
 
     Ok(())
 }
@@ -60,7 +67,7 @@ fn extract_control_identifier(input: &str) -> String {
         // --- Get RMF Control Number (Group 2) ---
         // We also know Group 2 is guaranteed to exist.
         let control_num_str = caps.get(2).unwrap().as_str();
-        
+
         // Parse the string to a number (e.g., u32). This beautifully
         // handles normalization (e.g., "03" becomes 3).
         // We can unwrap() the parse because the regex (\d+) guarantees it's a valid number.
@@ -73,10 +80,10 @@ fn extract_control_identifier(input: &str) -> String {
         // Group 3 is optional, so we must check if it was captured.
         if let Some(enhancement_match) = caps.get(3) {
             let enhancement_str = enhancement_match.as_str();
-            
+
             // Parse to normalize the enhancement number (e.g., "01" becomes 1).
             let enhancement_num: u32 = enhancement_str.parse().unwrap();
-            
+
             // Append the formatted enhancement directly to the result string.
             result.push_str(&format!("({})", enhancement_num));
         }
@@ -91,13 +98,15 @@ fn extract_control_identifier(input: &str) -> String {
 
 async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection) -> Result<()> {
     let bar = ProgressBar::new(4349); // estimated number of CCIs
-	let mut on: u32 = 0;
-    bar.set_style(ProgressStyle::default_bar()
-    	.template("{prefix} {bar:20.cyan/blue} {msg}")
-    	.expect("Failed to create progress style"));
-	bar.set_prefix("Parsing CCIs…");
-	bar.set_message(format!("{}/4349?", on));
-	let xml_content = fs::read_to_string(xml.path())
+    let mut on: u32 = 0;
+    bar.set_style(
+        ProgressStyle::default_bar()
+            .template("{prefix} {bar:20.cyan/blue} {msg}")
+            .expect("Failed to create progress style"),
+    );
+    bar.set_prefix("Parsing CCIs…");
+    bar.set_message(format!("{}/4349?", on));
+    let xml_content = fs::read_to_string(xml.path())
         .await
         .context("Failed to read CCI XML file")?;
 
@@ -109,7 +118,7 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
     let mut current_cci_id: u32 = 0;
     let mut current_definition = String::new();
     let mut current_references = Vec::new();
-	let mut current_v4_references = Vec::new();
+    let mut current_v4_references = Vec::new();
     let mut capture_text = false;
     let mut text_buffer = String::new();
 
@@ -127,9 +136,9 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
                             let value = String::from_utf8_lossy(&attr.value);
 
                             if key == "id" {
-								let tmp_cci = value.trim_start_matches("CCI-");
-                                current_cci_id = tmp_cci.parse::<u32>()
-                                    .context("Failed to parse CCI ID")?;
+                                let tmp_cci = value.trim_start_matches("CCI-");
+                                current_cci_id =
+                                    tmp_cci.parse::<u32>().context("Failed to parse CCI ID")?;
                             }
                         }
                     }
@@ -140,7 +149,7 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
                     "reference" => {
                         let mut ref_title = String::new();
                         let mut ref_index = String::new();
-                        
+
                         // Get the reference title and index attributes
                         for attr in e.attributes() {
                             let attr = attr.context("Failed to parse reference attribute")?;
@@ -153,13 +162,13 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
                                 _ => {}
                             }
                         }
-                        
+
                         // Only collect 800-53 Rev 5 references
                         if ref_title == "NIST SP 800-53 Revision 5" {
                             current_references.push(ref_index.clone());
                         }
 
-						// Only collect Rev 4 references when Rev 5 mappings don't exist
+                        // Only collect Rev 4 references when Rev 5 mappings don't exist
                         if ref_title == "NIST SP 800-53 Revision 4" {
                             current_v4_references.push(ref_index.clone());
                         }
@@ -181,21 +190,22 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
                     }
                     "cci_item" => {
                         // For each 800-53r5 reference, insert a CCI record
-						if current_references.len() == 0 && current_v4_references.len() > 0 {
-							current_references.append(&mut current_v4_references);
-						}
+                        if current_references.is_empty() && !current_v4_references.is_empty() {
+                            current_references.append(&mut current_v4_references);
+                        }
                         for control_number in &current_references {
-							let tmp_control_number = extract_control_identifier(control_number);
+                            let tmp_control_number = extract_control_identifier(control_number);
                             // Get the RMFControl ID for this control number
-                            let mut stmt = conn.prepare(
-                                "SELECT id FROM RMFControl WHERE number = ?"
-                            )?;
-                            
-                            if let Ok(control_id) = stmt.query_row([tmp_control_number], |row| row.get::<_, i64>(0)) {
+                            let mut stmt =
+                                conn.prepare("SELECT id FROM RMFControl WHERE number = ?")?;
+
+                            if let Ok(control_id) =
+                                stmt.query_row([tmp_control_number], |row| row.get::<_, i64>(0))
+                            {
                                 // Insert the CCI
-								on += 1;
-								bar.set_message(format!("{}/4349?", on));
-								bar.inc(1);
+                                on += 1;
+                                bar.set_message(format!("{}/4349?", on));
+                                bar.inc(1);
                                 conn.execute(
                                     "INSERT OR REPLACE INTO RMFCCI (id, RMFControlId, definition) VALUES (?1, ?2, ?3)",
                                     params![current_cci_id, control_id, current_definition],
@@ -207,7 +217,7 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
                         current_cci_id = 0;
                         current_definition.clear();
                         current_references.clear();
-						current_v4_references.clear();
+                        current_v4_references.clear();
                     }
                     _ => {}
                 }
@@ -220,7 +230,7 @@ async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
         buf.clear();
     }
 
-	bar.finish_with_message(format!("✓ ({})", on));
+    bar.finish_with_message(format!("✓ ({})", on));
 
     Ok(())
 }
