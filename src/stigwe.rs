@@ -37,11 +37,11 @@ struct MappingWithDefault {
 pub async fn process_stigwe(conn: &Connection, args: &Args) -> Result<()> {
 	// STIG↔CWE Data
     let mut stigwe_temp_yaml = NamedTempFile::new()?;
-	download_file("https://raw.githubusercontent.com/squinky86/STIGWE/refs/heads/main/mappings/mappings.yaml", &mut stigwe_temp_yaml, false, "Downloading STIGWE YAML file…".to_string(), &args).await?;
+	download_file("https://raw.githubusercontent.com/squinky86/STIGWE/refs/heads/main/mappings/mappings.yaml", &mut stigwe_temp_yaml, false, "Downloading STIGWE YAML file…".to_string(), args).await?;
 
     // Parse STIGWE YAML and populate database
 	p("Parsing STIGWE YAML and populating database:", true);
-	stigwe_parse_and_populate_database(&mut stigwe_temp_yaml, &conn).await?;
+	stigwe_parse_and_populate_database(&mut stigwe_temp_yaml, conn).await?;
 
     Ok(())
 }

@@ -33,11 +33,11 @@ struct RMFControl {
 pub async fn process_rmf(conn: &Connection, args: &Args) -> Result<()> {
 	// Download RMF Data
     let mut rmf_temp_xml = NamedTempFile::new()?;
-    download_file("https://csrc.nist.gov/CSRC/media/Projects/risk-management/800-53%20Downloads/800-53r5/SP_800-53_v5_1_XML.xml", &mut rmf_temp_xml, false, "Downloading RMF XML file from NIST…".to_string(), &args).await?;
+    download_file("https://csrc.nist.gov/CSRC/media/Projects/risk-management/800-53%20Downloads/800-53r5/SP_800-53_v5_1_XML.xml", &mut rmf_temp_xml, false, "Downloading RMF XML file from NIST…".to_string(), args).await?;
 
     // Parse RMF XML and populate database
 	p("Parsing NIST RMF XML and populating database:", true);
-	rmf_parse_and_populate_database(&mut rmf_temp_xml, &conn).await?;
+	rmf_parse_and_populate_database(&mut rmf_temp_xml, conn).await?;
 
     Ok(())
 }
@@ -65,7 +65,8 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 	let mut tmp_e_title: String = String::new();
 	let mut tmp_e_p: String = String::new();
 	let mut in_enhancements: bool = false;
-    
+    let re = Regex::new(r"^\s*[A-Z]{2}-\d{1,2}(?:\(\d{1,2}\))?\s*$").expect("Invalid Regex pattern");
+						
 	loop {
 		match reader.read_event_into(&mut buf) {
 			Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e))=> {
@@ -98,7 +99,6 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 						let tmp_num2 = text_buffer.trim().to_string();
 						// Regex that matches a NIST RMF control or enhancement (e.g., AC-03 or AC-03(1))
     					// ^\s*[A-Z]{2}-\d{1,2}(?:\(\d{1,2}\))?\s*$
-						let re = Regex::new(r"^\s*[A-Z]{2}-\d{1,2}(?:\(\d{1,2}\))?\s*$").expect("Invalid Regex pattern");
 						if re.is_match(&tmp_num2) {
 							if in_enhancements {
 								tmp_e_number = tmp_num2.clone();
@@ -118,18 +118,18 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 						else {
 							//we are in a line item within the description
 							if in_enhancements {
-								if tmp_e_p.len() > 0 {
-									tmp_e_p.push_str("\n");
+								if !tmp_e_p.is_empty() {
+									tmp_e_p.push('\n');
 								}
-								tmp_e_p.push_str(&tmp_num2.trim());
-								tmp_e_p.push_str(" ");
+								tmp_e_p.push_str(tmp_num2.trim());
+								tmp_e_p.push(' ');
 							}
 							else {
-								if tmp_p.len() > 0 {
-									tmp_p.push_str("\n");
+								if !tmp_p.is_empty() {
+									tmp_p.push('\n');
 								}
-								tmp_p.push_str(&tmp_num2.trim());
-								tmp_p.push_str(" ");
+								tmp_p.push_str(tmp_num2.trim());
+								tmp_p.push(' ');
 							}
 						}
 					}
@@ -143,10 +143,10 @@ async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connect
 					}
 					"description" => {
 						if in_enhancements {
-							tmp_e_p.push_str(&text_buffer.trim().to_string().replace("<p>", "").replace("</p>", "\n").trim());
+							tmp_e_p.push_str(text_buffer.trim().to_string().replace("<p>", "").replace("</p>", "\n").trim());
 						}
 						else {
-							tmp_p.push_str(&text_buffer.trim().to_string().replace("<p>", "").replace("</p>", "\n").trim());
+							tmp_p.push_str(text_buffer.trim().to_string().replace("<p>", "").replace("</p>", "\n").trim());
 						}
 					}
 					"control-enhancements" => {

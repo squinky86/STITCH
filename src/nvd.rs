@@ -421,7 +421,7 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 				}
 			}
 
-			if score_version <= 0 {
+			if score_version == 0 {
 				if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v31 {
 					for cvss_metric in cvss_metrics {
 						if cvss_metric.type_ == "Primary" {
@@ -452,7 +452,7 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 				}
 			}
 
-			if score_version <= 0 {
+			if score_version == 0 {
 				if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v30 {
 					for cvss_metric in cvss_metrics {
 						if cvss_metric.type_ == "Primary" {
@@ -483,7 +483,7 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 				}
 			}
 			
-			if score_version <= 0 {
+			if score_version == 0 {
 				if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v2 {
 					if !cvss_metrics.is_empty() {
 						for cvss_metric in cvss_metrics {
@@ -534,12 +534,7 @@ async fn nvd_parse_and_populate_database(json_file: &mut NamedTempFile, year: i3
 									cvss_v4.sub_integrity_impact = "HIGH".to_string();
 									cvss_v4.sub_availability_impact = "HIGH".to_string();
 								}
-								else if cvss_metric.obtain_user_privilege {
-									cvss_v4.sub_confidentiality_impact = "LOW".to_string();
-									cvss_v4.sub_integrity_impact = "LOW".to_string();
-									cvss_v4.sub_availability_impact = "LOW".to_string();
-								}
-								else if cvss_metric.obtain_other_privilege {
+								else if cvss_metric.obtain_user_privilege || cvss_metric.obtain_other_privilege {
 									cvss_v4.sub_confidentiality_impact = "LOW".to_string();
 									cvss_v4.sub_integrity_impact = "LOW".to_string();
 									cvss_v4.sub_availability_impact = "LOW".to_string();
