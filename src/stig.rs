@@ -327,13 +327,13 @@ pub async fn process_stig(conn: &Connection, args: &Args) -> Result<()> {
     p("✓", true);
 
     // Parse STIG XML and populate database
-    stig_parse_and_populate_database(&mut stig_temp_xml, conn).await?;
+    stig_parse_and_populate_database(&stig_temp_xml, conn).await?;
 
     Ok(())
 }
 
 async fn stig_parse_and_populate_database(
-    xml: &mut NamedTempFile,
+    xml: &NamedTempFile,
     conn: &Connection,
 ) -> Result<()> {
     let xml_content = fs::read_to_string(xml.path())

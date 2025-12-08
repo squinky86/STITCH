@@ -37,12 +37,12 @@ pub async fn process_rmf(conn: &Connection, args: &Args) -> Result<()> {
 
     // Parse RMF XML and populate database
     p("Parsing NIST RMF XML and populating database:", true);
-    rmf_parse_and_populate_database(&mut rmf_temp_xml, conn).await?;
+    rmf_parse_and_populate_database(&rmf_temp_xml, conn).await?;
 
     Ok(())
 }
 
-async fn rmf_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection) -> Result<()> {
+async fn rmf_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection) -> Result<()> {
     let xml_content = fs::read_to_string(xml.path())
         .await
         .context("Failed to read RMF XML file")?;

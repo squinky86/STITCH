@@ -51,13 +51,13 @@ pub async fn process_cwe(conn: &Connection, args: &Args) -> Result<()> {
     p("✓", true);
 
     // Parse and populate database
-    cwe_parse_and_populate_database(&mut cwe_temp_xml, conn, args).await?;
+    cwe_parse_and_populate_database(&cwe_temp_xml, conn, args).await?;
 
     Ok(())
 }
 
 async fn cwe_parse_and_populate_database(
-    xml: &mut NamedTempFile,
+    xml: &NamedTempFile,
     conn: &Connection,
     args: &Args,
 ) -> Result<()> {

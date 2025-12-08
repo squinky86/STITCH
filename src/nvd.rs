@@ -324,14 +324,14 @@ pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
         decompress_gzip(&mut nvd_temp_json_gz, &mut nvd_temp_json).await?;
         p("✓", true);
 
-        nvd_parse_and_populate_database(&mut nvd_temp_json, year, conn).await?;
+        nvd_parse_and_populate_database(&nvd_temp_json, year, conn).await?;
     }
 
     Ok(())
 }
 
 async fn nvd_parse_and_populate_database(
-    json_file: &mut NamedTempFile,
+    json_file: &NamedTempFile,
     year: i32,
     conn: &Connection,
 ) -> Result<()> {

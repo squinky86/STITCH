@@ -48,15 +48,12 @@ pub async fn process_stigwe(conn: &Connection, args: &Args) -> Result<()> {
 
     // Parse STIGWE YAML and populate database
     p("Parsing STIGWE YAML and populating database:", true);
-    stigwe_parse_and_populate_database(&mut stigwe_temp_yaml, conn).await?;
+    stigwe_parse_and_populate_database(&stigwe_temp_yaml, conn).await?;
 
     Ok(())
 }
 
-async fn stigwe_parse_and_populate_database(
-    yaml: &mut NamedTempFile,
-    conn: &Connection,
-) -> Result<()> {
+async fn stigwe_parse_and_populate_database(yaml: &NamedTempFile, conn: &Connection) -> Result<()> {
     let yaml_content = fs::read_to_string(yaml.path())
         .await
         .context("Failed to read YAML file")?;

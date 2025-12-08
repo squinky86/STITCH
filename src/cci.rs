@@ -52,7 +52,7 @@ pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
     p("✓", true);
 
     // Parse CCI XML and populate database
-    cci_parse_and_populate_database(&mut cci_temp_xml, conn).await?;
+    cci_parse_and_populate_database(&cci_temp_xml, conn).await?;
 
     Ok(())
 }
@@ -96,7 +96,7 @@ fn extract_control_identifier(input: &str) -> String {
     }
 }
 
-async fn cci_parse_and_populate_database(xml: &mut NamedTempFile, conn: &Connection) -> Result<()> {
+async fn cci_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection) -> Result<()> {
     let bar = ProgressBar::new(4349); // estimated number of CCIs
     let mut on: u32 = 0;
     bar.set_style(
