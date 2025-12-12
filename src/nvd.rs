@@ -259,7 +259,7 @@ pub struct Weakness {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Configuration {
-    pub nodes: Vec<Node>,
+    pub nodes: Option<Vec<Node>>,
 }
 
 #[allow(dead_code)]
