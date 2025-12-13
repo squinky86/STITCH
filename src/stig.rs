@@ -332,10 +332,7 @@ pub async fn process_stig(conn: &Connection, args: &Args) -> Result<()> {
     Ok(())
 }
 
-async fn stig_parse_and_populate_database(
-    xml: &NamedTempFile,
-    conn: &Connection,
-) -> Result<()> {
+async fn stig_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection) -> Result<()> {
     let xml_content = fs::read_to_string(xml.path())
         .await
         .context("Failed to read STIG XML file")?;
