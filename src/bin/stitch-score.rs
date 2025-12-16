@@ -816,18 +816,18 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
 
         let cwe_data_elements = stmt_cwe.query_map(params![cve_data.0], |row| {
             Ok(CWEDetails {
-                id: row.get::<_, u32>(0)?,               //id
-                name: row.get::<_, String>(1)?,          //name
-                abstraction: row.get::<_, String>(2)?,   //abstraction
-                category: row.get::<_, bool>(3)?,        //category
-                view: row.get::<_, bool>(4)?,            //view
-                confidentiality: row.get::<_, bool>(5)?, //confidentiality
-                integrity: row.get::<_, bool>(6)?,       //integrity
-                availability: row.get::<_, bool>(7)?,    //availability
-                disaid: row.get::<_, String>(8)?,        //DISAId
-                severity: row.get::<_, String>(9)?,      //severity
-                control: row.get::<_, String>(10)?,      //RMF Control
-                cci: row.get::<_, u32>(11)?.to_string(), //CCI
+                id: row.get::<_, u32>(0)?,                      //id
+                name: row.get::<_, String>(1)?,                 //name
+                abstraction: row.get::<_, String>(2)?,          //abstraction
+                category: row.get::<_, bool>(3)?,               //category
+                view: row.get::<_, bool>(4)?,                   //view
+                confidentiality: row.get::<_, bool>(5)?,        //confidentiality
+                integrity: row.get::<_, bool>(6)?,              //integrity
+                availability: row.get::<_, bool>(7)?,           //availability
+                disaid: row.get::<_, String>(8)?,               //DISAId
+                severity: row.get::<_, String>(9)?,             //severity
+                control: row.get::<_, String>(10)?,             //RMF Control
+                cci: format!("CCI-{}", row.get::<_, u32>(11)?), //CCI
             })
         })?;
 

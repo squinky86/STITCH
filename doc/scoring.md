@@ -103,10 +103,10 @@ When the highest primary score is in CVSS version 2.0, the following conversions
 | :--- | :--- |
 | Attack Vector (AV) | Access Vector (AV) |
 | AV: `ADJACENT_NETWORK` | AV: `ADJACENT` |
-| Access Complexity (AC) | Attack Complexity (AC) and Attack Requirements (AR) |
-| AC: `LOW` | AC: `LOW`, AR: `NONE` |
-| AC: `MEDIUM` | AC: `LOW`, AR: `PRESENT` |
-| AC: `HIGH` | AC: `HIGH`, AR: `PRESENT` |
+| Access Complexity (AC) | Attack Complexity (AC) and Attack Requirements (AT) |
+| AC: `LOW` | AC: `LOW`, AT: `NONE` |
+| AC: `MEDIUM` | AC: `LOW`, AT: `PRESENT` |
+| AC: `HIGH` | AC: `HIGH`, AT: `PRESENT` |
 | Authentication (AU) | Privileges Required (PR) |
 | AU: `MULTIPLE` | PR: `HIGH` |
 | AU: `SINGLE` | PR: `LOW` |
