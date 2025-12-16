@@ -28,9 +28,10 @@ Any opinions, findings, and conclusions or recommendations expressed in this mat
 This document is maintained as part of the Scoring Tool for Integrated Threat and Compliance Heuristics (STITCH) project. It establishes the STITCH Score Estimation (SSE), a methodology for assessing and prioritizing software weaknesses identified by Application Security Testing (AST) tools, including Static (SAST), Dynamic (DAST), Interactive (IAST), and Software Composition Analysis (SCA).
 
 The primary goals of SSE are to:
-1.  Provide a repeatable and consistent framework for scoring software weaknesses based on their exploitability, impact, and the confidence of the analyst.
-2.  Generate a risk-based score to guide remediation efforts and prioritize findings.
-3.  Provide a mechanism to estimate an equivalent Common Vulnerability Scoring System (CVSS) v4.0 score for standardized reporting.
+
+1. Provide a repeatable and consistent framework for scoring software weaknesses based on their exploitability, impact, and the confidence of the analyst.
+2. Generate a risk-based score to guide remediation efforts and prioritize findings.
+3. Provide a mechanism to estimate an equivalent Common Vulnerability Scoring System (CVSS) v4.0 score for standardized reporting.
 
 ## 2.0 Scope
 
@@ -68,6 +69,7 @@ This standard does not apply to system-level attributes, operational environment
 ## 4.0 Scoring Methodology
 
 SSE combines two sources of data to create its scoring estimations:
+
 * MITRE's CWEs
 * NVD's CVEs
 
@@ -235,9 +237,9 @@ STITCH includes associating scores against the Application Security and Developm
 
 ## Appendix A: References
 
-*  Forum of Incident Response and Security Teams, Inc. (FIRST). [CVSS Specification](https://www.first.org/cvss/v4.0/specification-document) V4.0.
-*  Hood, Jon. [STIG Weakness Enumerations (STIGWE)](https://www.github.com/squinky86/STIGWE).
-*  MITRE Corporation. [Common Weakness Enumeration (CWE)](https://cwe.mitre.org/) V4.19.
-*  National Institute of Standards and Technology (NIST). [National Vulnerability Database (NVD)](https://nvd.nist.gov/).
-*  National Institute of Standards and Technology. "Security and Privacy Controls for Information Systems and Organizations." Computer Security Resource Center, Special Publication 800-53, Revision 5, Update 1, U.S. Department of Commerce, 15 Sept. 2020, [https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final](https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final).
-*  U.S. Department of Defense. [DoD Cyber Exchange](https://public.cyber.mil/).
+* Forum of Incident Response and Security Teams, Inc. (FIRST). [CVSS Specification](https://www.first.org/cvss/v4.0/specification-document) V4.0.
+* Hood, Jon. [STIG Weakness Enumerations (STIGWE)](https://www.github.com/squinky86/STIGWE).
+* MITRE Corporation. [Common Weakness Enumeration (CWE)](https://cwe.mitre.org/) V4.19.
+* National Institute of Standards and Technology (NIST). [National Vulnerability Database (NVD)](https://nvd.nist.gov/).
+* National Institute of Standards and Technology. "Security and Privacy Controls for Information Systems and Organizations." Computer Security Resource Center, Special Publication 800-53, Revision 5, Update 1, U.S. Department of Commerce, 15 Sept. 2020, [https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final](https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final).
+* U.S. Department of Defense. [DoD Cyber Exchange](https://public.cyber.mil/).
