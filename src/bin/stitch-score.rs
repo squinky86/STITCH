@@ -788,7 +788,7 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
     if args.verbose {
         println!(
             "Found CVE: {} using CVSS Version {}. Constructing CVSS 4.0 vector from database: {}.",
-            cve_id, cve_data.32, vector_string
+            cve_id, cve_data.33, vector_string
         );
     }
 
