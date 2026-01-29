@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     println!("STITCH Database Builder v0.1.0");
-    println!("Copyright © 2025 Jon Hood");
+    println!("Copyright © 2025-2016 Jon Hood");
 
     // DB Structure
     let conn = create_database(&args.output)?;
