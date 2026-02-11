@@ -193,7 +193,7 @@ scoreVersion INTEGER NOT NULL DEFAULT 0 CHECK(scoreVersion IN (0, 2, 3, 4))
 );",
         [],
     )
-    .context("Failed to create Vulnerability table")?;
+    .context("Failed to create NVD table")?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS MapVulnerabilityWeakness (
@@ -215,8 +215,10 @@ FOREIGN KEY(WeaknessId) REFERENCES Weakness(id)
 pub fn display_database_summary(conn: &Connection) -> Result<()> {
     p("\n=== Database Summary ===", true);
 
-    let mut stmt;
-    let mut tmp_count: i64;
+    // Count entries
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM Weakness")?;
+    let mut tmp_count: i64 = stmt.query_row([], |row| row.get(0))?;
+    p(format!("CWE Entries: {}", tmp_count).as_ref(), true);
 
     // Count relationships
     stmt = conn.prepare("SELECT COUNT(*) FROM WeaknessRelationship")?;
