@@ -225,6 +225,7 @@ async fn cwe_parse_and_populate_database(
                             }
                         }
                         has_other = false;
+                        capture_text = false;
                     }
                     _ => {}
                 }
@@ -295,7 +296,7 @@ fn cwe_insert_data_to_database(
             .template("{prefix} {bar:20.cyan/blue} {msg}")
             .expect("Failed to create progress style"),
     );
-    bar2.set_prefix("Inserting CWE Relationshps…");
+    bar2.set_prefix("Inserting CWE Relationships…");
     bar2.set_message(format!("{}/{}", on, relationships.len()));
     tx = conn.unchecked_transaction()?;
     {

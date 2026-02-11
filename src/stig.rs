@@ -356,7 +356,7 @@ async fn stig_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection
     bar.set_message(format!("{}/{}", on, total_rules));
 
     //create the new STIG
-    let _ = conn.execute(
+    conn.execute(
 		"INSERT INTO STIG (title, version, stigId, release, identifier) VALUES (?1, ?2, ?3, ?4, ?5)",
 		params![
 			benchmark.title,
@@ -365,7 +365,7 @@ async fn stig_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection
 			benchmark.release_info().first().ok_or_else(|| anyhow::anyhow!("Missing release info"))?,
 			benchmark.groups.first().ok_or_else(|| anyhow::anyhow!("Missing group"))?.rules.first().ok_or_else(|| anyhow::anyhow!("Missing rule"))?.reference.identifier.clone()
 		],
-	);
+	)?;
     let stig_id = conn.last_insert_rowid();
 
     // Now iterate through the groups and rules to insert them

@@ -232,7 +232,7 @@ async fn rmf_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
         bar2.set_message(format!("{}/{}", on, controls.len()));
         bar2.inc(1);
         let mut tmp_sql: String = String::new();
-        tmp_sql.push_str("INSERT OR REPLACE INTO RMFControl (RMFFamilyId, number, name, description) VALUES ((SELECT id FROM RMFFamily WHERE abbr = $1), ?2, ?3, ?4)");
+        tmp_sql.push_str("INSERT OR REPLACE INTO RMFControl (RMFFamilyId, number, name, description) VALUES ((SELECT id FROM RMFFamily WHERE abbr = ?1), ?2, ?3, ?4)");
         conn.execute(
             &tmp_sql,
             params![

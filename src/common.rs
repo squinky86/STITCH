@@ -26,7 +26,7 @@ pub struct Args {
     pub verbose: bool,
 }
 
-pub async fn decompress_gzip(input: &mut NamedTempFile, output: &mut NamedTempFile) -> Result<()> {
+pub async fn decompress_gzip(input: &NamedTempFile, output: &mut NamedTempFile) -> Result<()> {
     let mut gz = GzDecoder::new(std::fs::File::open(input.path())?);
     std::io::copy(&mut gz, output.as_file_mut())?;
     output.as_file_mut().sync_all()?;

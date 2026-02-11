@@ -321,7 +321,7 @@ pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
                 .as_ref(),
             false,
         );
-        decompress_gzip(&mut nvd_temp_json_gz, &mut nvd_temp_json).await?;
+        decompress_gzip(&nvd_temp_json_gz, &mut nvd_temp_json).await?;
         p("✓", true);
 
         nvd_parse_and_populate_database(&nvd_temp_json, year, conn).await?;
@@ -684,14 +684,15 @@ async fn nvd_parse_and_populate_database(
                             .iter()
                             .filter(|d| d.lang == "en" && d.value.starts_with("CWE-"))
                         {
-                            let tmp_weakness = description
+                            if let Ok(tmp_weakness) = description
                                 .value
                                 .trim_start_matches("CWE-")
                                 .parse::<i32>()
-                                .context(format!("Failed to parse CWE {}", description.value))?;
-                            if !inserted.contains(&tmp_weakness) {
-                                stmt2.execute(params![vuln_id, tmp_weakness])?;
-                                inserted.push(tmp_weakness);
+                            {
+                                if !inserted.contains(&tmp_weakness) {
+                                    stmt2.execute(params![vuln_id, tmp_weakness])?;
+                                    inserted.push(tmp_weakness);
+                                }
                             }
                         }
                     }
