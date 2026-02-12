@@ -16,7 +16,7 @@ Any opinions, findings, and conclusions or recommendations expressed in this mat
 
 ### Prerequisites
 - Rust (1.85+)
-- Internet connection (for downloading CWE data)
+- Internet connection (for downloading CWE, NVD, STIG, RMF, and Mapping data)
 
 ### Build from source
 ```bash
