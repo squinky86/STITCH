@@ -218,13 +218,13 @@ With the set of CVEs obtained from Section 4.2.1, the parameters for a new CVSS 
 
 #### 4.2.2.1 Weighted Mean Calculation
 
-CVEs with an impact of `HIGH` are weighted with a value of 3. CVEs with an impact of `LOW` are weighted with a value of 1. CVEs with an impact of `NONE` are weighted with a value of 0. The weighted average (w) is the sum of all values (v) divided by the total number of CVEs (n).
+CVEs with an impact of `HIGH` are weighted with a value of 3. CVEs with an impact of `LOW` are weighted with a value of 1. CVEs with an impact of `NONE` are weighted with a value of 0. The average of these weights (w) is the sum of all values (v) divided by the total number of CVEs (n).
 
 $$
 w = \frac{\sum_{i=1}^{n} v_i}{n}
 $$
 
-When w is less than 0.33, the weighted mean is set to `NONE`. When w is 0.33 to 2.0, the weighted mean is set to `LOW`. When w is 2.0 or greater, the weighted mean is set to `HIGH`.
+When w is less than 0.33, the mean weight is set to `NONE`. When w is 0.33 to less than 2.0, the mean weight is set to `LOW`. When w is 2.0 or greater, the mean weight is set to `HIGH`.
 
 ## 4.3 Supplemental Information
 

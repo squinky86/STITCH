@@ -10,7 +10,7 @@ use cvss::v3::Base;
 use cvss::v4::Vector;
 use rusqlite::{Connection, Row, params};
 use serde_json::json;
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::{HashMap, HashSet}, str::FromStr};
 use uuid::Uuid;
 
 fn get_controls_from_controls(controls: Vec<String>, db_path: &str) -> Result<()> {
@@ -1261,7 +1261,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
         cves.extend(tmp_cves);
     }
 
-    let mut processed_cwes: Vec<u32> = Vec::new();
+    let mut processed_cwes: HashSet<u32> = HashSet::new();
 
     // ROUND 2: Progeny CWEs of View 1000
     // Iterate one generation at a time until there are enough CVEs to score.
