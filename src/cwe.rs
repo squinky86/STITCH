@@ -217,12 +217,13 @@ async fn cwe_parse_and_populate_database(
                         capture_text = false;
                     }
                     "Impact" => {
-                        if let Some(weakness) = current_weakness.as_mut() {
-                            if has_other && text_buffer.trim() == "Varies by Context" {
-                                weakness.confidentiality = true;
-                                weakness.integrity = true;
-                                weakness.availability = true;
-                            }
+                        if let Some(weakness) = current_weakness.as_mut()
+                            && has_other
+                            && text_buffer.trim() == "Varies by Context"
+                        {
+                            weakness.confidentiality = true;
+                            weakness.integrity = true;
+                            weakness.availability = true;
                         }
                         has_other = false;
                         capture_text = false;

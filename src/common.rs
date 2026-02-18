@@ -117,19 +117,15 @@ pub async fn download_file(
         file.as_file_mut()
             .write_all(&chunk)
             .context("Failed to write chunk to file")?;
-        if !silent {
-            if let Some(pb) = &progress_bar {
-                pb.inc(chunk.len() as u64);
-                pb.set_message(format!("{}/{}B", pb.position(), &total_size));
-            }
+        if !silent && let Some(pb) = &progress_bar {
+            pb.inc(chunk.len() as u64);
+            pb.set_message(format!("{}/{}B", pb.position(), &total_size));
         }
     }
 
-    if !silent {
-        if let Some(pb) = &progress_bar {
-            pb.finish_with_message(format!("✓ {}B", pb.position()));
-            println!();
-        }
+    if !silent && let Some(pb) = &progress_bar {
+        pb.finish_with_message(format!("✓ {}B", pb.position()));
+        println!();
     }
 
     file.as_file_mut()

@@ -428,13 +428,13 @@ async fn stig_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection
             )?;
             let check_id = conn.last_insert_rowid();
             for cci_id_str in rule.cci_idents() {
-                if let Ok(cci_id) = cci_id_str.trim_start_matches("CCI-").parse::<u32>() {
-                    if cci_id != 0 {
-                        conn.execute(
+                if let Ok(cci_id) = cci_id_str.trim_start_matches("CCI-").parse::<u32>()
+                    && cci_id != 0
+                {
+                    conn.execute(
 							"INSERT INTO MapSTIGCheckCCI (STIGCheckId, CCIId) SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM RMFCCI WHERE id = ?2)",
 							params![check_id, cci_id],
 						)?;
-                    }
                 }
             }
         }
