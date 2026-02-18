@@ -31,11 +31,7 @@ static RMF_REGEX: OnceLock<Regex> = OnceLock::new();
 //   \s* - Allows for whitespace before the closing parenthesis.
 //   \)             - A literal closing parenthesis.
 fn get_rmf_regex() -> &'static Regex {
-    RMF_REGEX.get_or_init(|| {
-        Regex::new(
-            r"^([A-Z]{2})\s*-\s*(\d+)(?:\s*\(\s*(\d+)\s*\))?"
-        ).unwrap()
-    })
+    RMF_REGEX.get_or_init(|| Regex::new(r"^([A-Z]{2})\s*-\s*(\d+)(?:\s*\(\s*(\d+)\s*\))?").unwrap())
 }
 
 pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {

@@ -10,7 +10,10 @@ use cvss::v3::Base;
 use cvss::v4::Vector;
 use rusqlite::{Connection, Row, params};
 use serde_json::json;
-use std::{collections::{HashMap, HashSet}, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 use uuid::Uuid;
 
 fn get_controls_from_controls(controls: Vec<String>, db_path: &str) -> Result<()> {

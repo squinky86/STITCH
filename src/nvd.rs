@@ -684,10 +684,8 @@ async fn nvd_parse_and_populate_database(
                             .iter()
                             .filter(|d| d.lang == "en" && d.value.starts_with("CWE-"))
                         {
-                            if let Ok(tmp_weakness) = description
-                                .value
-                                .trim_start_matches("CWE-")
-                                .parse::<i32>()
+                            if let Ok(tmp_weakness) =
+                                description.value.trim_start_matches("CWE-").parse::<i32>()
                             {
                                 if !inserted.contains(&tmp_weakness) {
                                     stmt2.execute(params![vuln_id, tmp_weakness])?;
