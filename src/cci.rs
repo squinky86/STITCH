@@ -5,33 +5,37 @@ use crate::common::{Args, download_file, extract_from_zip, p};
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
-use lazy_static::lazy_static;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use regex::Regex;
 use rusqlite::{Connection, params};
+use std::sync::OnceLock;
 use tempfile::NamedTempFile;
 use tokio::fs;
 
-// Use lazy_static to compile the regex only once for efficiency.
-lazy_static! {
-    // This regex is designed to capture the RMF components.
-    //
-    // Breakdown:
-    // ^                - Anchor to the start of the string.
-    // ([A-Z]{2})      - Capture Group 1: The RMF Family (exactly two uppercase letters).
-    // \s*-\s* - A hyphen, allowing for surrounding whitespace (e.g., "AC - 1").
-    // (\d+)            - Capture Group 2: The RMF Control Number (one or more digits, e.g., "1", "03").
-    // (?: ... )?       - An optional, non-capturing group for the enhancement.
-    //   \s* - Allows for whitespace between the control number and the parenthesis.
-    //   \(             - A literal opening parenthesis.
-    //   \s* - Allows for whitespace inside the parenthesis (e.g., "( 1 )").
-    //   (\d+)          - Capture Group 3: The Enhancement Number (one or more digits, e.g., "1", "04").
-    //   \s* - Allows for whitespace before the closing parenthesis.
-    //   \)             - A literal closing parenthesis.
-    static ref RMF_REGEX: Regex = Regex::new(
-        r"^([A-Z]{2})\s*-\s*(\d+)(?:\s*\(\s*(\d+)\s*\))?"
-    ).unwrap();
+// Use OnceLock to compile the regex only once for efficiency.
+static RMF_REGEX: OnceLock<Regex> = OnceLock::new();
+
+// This regex is designed to capture the RMF components.
+//
+// Breakdown:
+// ^                - Anchor to the start of the string.
+// ([A-Z]{2})      - Capture Group 1: The RMF Family (exactly two uppercase letters).
+// \s*-\s* - A hyphen, allowing for surrounding whitespace (e.g., "AC - 1").
+// (\d+)            - Capture Group 2: The RMF Control Number (one or more digits, e.g., "1", "03").
+// (?: ... )?       - An optional, non-capturing group for the enhancement.
+//   \s* - Allows for whitespace between the control number and the parenthesis.
+//   \(             - A literal opening parenthesis.
+//   \s* - Allows for whitespace inside the parenthesis (e.g., "( 1 )").
+//   (\d+)          - Capture Group 3: The Enhancement Number (one or more digits, e.g., "1", "04").
+//   \s* - Allows for whitespace before the closing parenthesis.
+//   \)             - A literal closing parenthesis.
+fn get_rmf_regex() -> &'static Regex {
+    RMF_REGEX.get_or_init(|| {
+        Regex::new(
+            r"^([A-Z]{2})\s*-\s*(\d+)(?:\s*\(\s*(\d+)\s*\))?"
+        ).unwrap()
+    })
 }
 
 pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
@@ -58,8 +62,8 @@ pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
 }
 
 fn extract_control_identifier(input: &str) -> String {
-    // RMF_REGEX.captures() attempts to match the regex at the beginning of the string.
-    if let Some(caps) = RMF_REGEX.captures(input) {
+    // get_rmf_regex().captures() attempts to match the regex at the beginning of the string.
+    if let Some(caps) = get_rmf_regex().captures(input) {
         // --- Get RMF Family (Group 1) ---
         // We can unwrap() because a successful match guarantees Group 1 exists.
         let family = caps.get(1).unwrap().as_str();

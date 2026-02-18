@@ -15,7 +15,7 @@ Any opinions, findings, and conclusions or recommendations expressed in this mat
 ## Installation
 
 ### Prerequisites
-- Rust (1.85+)
+- Rust (1.88+)
 - Internet connection (for downloading CWE, NVD, STIG, RMF, and Mapping data)
 
 ### Build from source
