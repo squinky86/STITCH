@@ -88,7 +88,6 @@ WHERE r.source_id = '89' AND r.nature = 'ChildOf';
 - `cvss` - CVSS 4.0 scoring
 - `lazy_static` - lazy loading of regexes
 - `uuid` - UUIDs for STIG generation
-- `openssl` - set to vendor mode as a subdependency for static building
 
 ## Contributing
 
