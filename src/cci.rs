@@ -59,7 +59,7 @@ pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
 
 fn extract_control_identifier(input: &str) -> String {
     // get_rmf_regex().captures() attempts to match the regex at the beginning of the string.
-    if let Some(caps) = get_rmf_regex().captures(input) {
+    get_rmf_regex().captures(input).map_or_else(String::new, |caps| {
         // --- Get RMF Family (Group 1) ---
         // We can unwrap() because a successful match guarantees Group 1 exists.
         let family = caps.get(1).unwrap().as_str();
@@ -90,10 +90,7 @@ fn extract_control_identifier(input: &str) -> String {
 
         // Return the final, formatted string.
         result
-    } else {
-        // If the regex did not match the start of the string, return an empty string.
-        String::new()
-    }
+    })
 }
 
 async fn cci_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection) -> Result<()> {

@@ -483,13 +483,11 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
                 .filter_map(std::result::Result::ok)
                 .collect();
 
-            let mut status: String = "not_reviewed".to_string();
-            let mut finding_details: String = String::new();
-            if ids.contains(&stigcheck.disa_id) {
-                status = "open".to_string();
-                finding_details =
-                    "|organization| identified findings against this check.".to_string();
-            }
+            let (status, finding_details) = if ids.contains(&stigcheck.disa_id) {
+                ("open".to_string(), "|organization| identified findings against this check.".to_string())
+            } else {
+                ("not_reviewed".to_string(), String::new())
+            };
 
             let check = json!({
                 "uuid": Uuid::new_v4().to_string(),
@@ -818,25 +816,45 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
         )?;
 
         let cwe_data_elements = stmt_cwe.query_map(params![cve_data.0], |row| {
+            let id = row.get::<_, u32>(0);
+            let name = row.get::<_, Option<String>>(1);
+            let abstraction = row.get::<_, Option<String>>(2);
+            let category = row.get::<_, bool>(3);
+            let view = row.get::<_, bool>(4);
+            let confidentiality = row.get::<_, bool>(5);
+            let integrity = row.get::<_, bool>(6);
+            let availability = row.get::<_, bool>(7);
+            let disaid = row.get::<_, Option<String>>(8);
+            let severity = row.get::<_, Option<String>>(9);
+            let control = row.get::<_, Option<String>>(10);
+            let cci = row.get::<_, u32>(11);
             Ok(CWEDetails {
-                id: row.get::<_, u32>(0)?,                      //id
-                name: row.get::<_, String>(1)?,                 //name
-                abstraction: row.get::<_, String>(2)?,          //abstraction
-                category: row.get::<_, bool>(3)?,               //category
-                view: row.get::<_, bool>(4)?,                   //view
-                confidentiality: row.get::<_, bool>(5)?,        //confidentiality
-                integrity: row.get::<_, bool>(6)?,              //integrity
-                availability: row.get::<_, bool>(7)?,           //availability
-                disaid: row.get::<_, String>(8)?,               //DISAId
-                severity: row.get::<_, String>(9)?,             //severity
-                control: row.get::<_, String>(10)?,             //RMF Control
-                cci: format!("CCI-{}", row.get::<_, u32>(11)?), //CCI
+                id: id?,
+                name: name?.unwrap_or_default(),
+                abstraction: abstraction?.unwrap_or_default(),
+                category: category?,
+                view: view?,
+                confidentiality: confidentiality?,
+                integrity: integrity?,
+                availability: availability?,
+                disaid: disaid?.unwrap_or_default(),
+                severity: severity?.unwrap_or_default(),
+                control: control?.unwrap_or_default(),
+                cci: format!("CCI-{}", cci?),
             })
         })?;
 
-        let cwe_data_result: rusqlite::Result<Vec<CWEDetails>> = cwe_data_elements.collect();
+        let mut success_count = 0;
+        let mut error_count = 0;
+        let cwe_data_result: Vec<CWEDetails> = cwe_data_elements
+            .filter_map(|r| match r {
+                Ok(v) => { success_count += 1; Some(v) },
+                Err(_e) => { error_count += 1; /*eprintln!("DEBUG: Row error: {}", e);*/ None },
+            })
+            .collect();
+        //eprintln!("DEBUG: CWE query returned {} successes, {} errors, total rows = {}", success_count, error_count, cwe_data_result.len());
 
-        cwe_data_result.with_context(|| "No records found in the database.")?
+        cwe_data_result
     };
 
     let details: CWEDetails = if cwe_data.is_empty() {
@@ -1105,16 +1123,16 @@ fn score_from_stig(stig_id: &str, db_path: &str, args: &Args) -> Result<()> {
         let stig_data_elements = stmt_stig.query_map(params![stig_id_query], |row| {
             Ok(CWEDetails {
                 id: row.get::<_, u32>(0)?,               //id
-                name: row.get::<_, String>(1)?,          //name
-                abstraction: row.get::<_, String>(2)?,   //abstraction
+                name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),      //name
+                abstraction: row.get::<_, Option<String>>(2)?.unwrap_or_default(), //abstraction
                 category: row.get::<_, bool>(3)?,        //category
                 view: row.get::<_, bool>(4)?,            //view
                 confidentiality: row.get::<_, bool>(5)?, //confidentiality
                 integrity: row.get::<_, bool>(6)?,       //integrity
                 availability: row.get::<_, bool>(7)?,    //availability
-                disaid: row.get::<_, String>(8)?,        //DISAId
-                severity: row.get::<_, String>(9)?,      //severity
-                control: row.get::<_, String>(10)?,      //RMF Control
+                disaid: row.get::<_, Option<String>>(8)?.unwrap_or_default(), //DISAId
+                severity: row.get::<_, Option<String>>(9)?.unwrap_or_default(), //severity
+                control: row.get::<_, Option<String>>(10)?.unwrap_or_default(),      //RMF Control
                 cci: row.get::<_, u32>(11)?.to_string(), //CCI
             })
         })?;
@@ -1159,16 +1177,16 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
         let cwe_data_elements = stmt_cwe.query_map(params![cwe_num_id], |row| {
             Ok(CWEDetails {
                 id: row.get::<_, u32>(0)?,               //id
-                name: row.get::<_, String>(1)?,          //name
-                abstraction: row.get::<_, String>(2)?,   //abstraction
+                name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),      //name
+                abstraction: row.get::<_, Option<String>>(2)?.unwrap_or_default(), //abstraction
                 category: row.get::<_, bool>(3)?,        //category
                 view: row.get::<_, bool>(4)?,            //view
                 confidentiality: row.get::<_, bool>(5)?, //confidentiality
                 integrity: row.get::<_, bool>(6)?,       //integrity
                 availability: row.get::<_, bool>(7)?,    //availability
-                disaid: row.get::<_, String>(8)?,        //DISAId
-                severity: row.get::<_, String>(9)?,      //severity
-                control: row.get::<_, String>(10)?,      //RMF Control
+                disaid: row.get::<_, Option<String>>(8)?.unwrap_or_default(), //DISAId
+                severity: row.get::<_, Option<String>>(9)?.unwrap_or_default(), //severity
+                control: row.get::<_, Option<String>>(10)?.unwrap_or_default(),      //RMF Control
                 cci: row.get::<_, u32>(11)?.to_string(), //CCI
             })
         })?;

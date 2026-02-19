@@ -13,7 +13,7 @@
             },
             "args": []
         },
-		{
+        {
             "name": "Debug executable 'stitch-score'",
             "type": "lldb",
             "request": "launch",
@@ -24,7 +24,7 @@
                 ]
             },
             "args": [
-				"CWE-9999"
+                "Cve-2025-69633"
             ]
         },
         {
@@ -40,20 +40,24 @@
         }
     ],
     "tasks": [
-    {
-      "label": "cargo build",
-      "type": "shell",
-      "command": "cargo",
-      "args": ["build"],
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      },
-      "problemMatcher": ["$rustc"],
-      "presentation": {
-        "reveal": "always",
-        "panel": "shared"
-      }
-    }
-  ]
+        {
+            "label": "cargo build",
+            "type": "shell",
+            "command": "cargo",
+            "args": [
+                "build"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        }
+    ]
 }
