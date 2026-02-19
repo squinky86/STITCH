@@ -812,7 +812,7 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
             JOIN MapSTIGCheckCCI ON STIGCheck.id = MapSTIGCheckCCI.STIGCheckId
             JOIN RMFCCI ON MapSTIGCheckCCI.CCIId = RMFCCI.id
             JOIN RMFControl ON RMFCCI.RMFControlId = RMFControl.id
-            WHERE Weakness.id IN (SELECT WeaknessId FROM MapVulnerabilityWeakness WHERE VulnerabilityId = ?1)",
+            WHERE Weakness.id IN (SELECT WeaknessId FROM MapVulnerabilityWeakness WHERE VulnerabilityId = ?1 ORDER BY `Primary` DESC)",
         )?;
 
         let cwe_data_elements = stmt_cwe.query_map(params![cve_data.0], |row| {
@@ -995,7 +995,7 @@ fn get_cve_data_by_weakness(
         vulnerabilityResponseEffort,
 		NVDId
     FROM Vulnerability 
-    WHERE id IN (SELECT VulnerabilityId FROM MapVulnerabilityWeakness WHERE WeaknessId = ?2)
+    WHERE id IN (SELECT VulnerabilityId FROM MapVulnerabilityWeakness WHERE WeaknessId = ?2 AND `Primary` = 1)
 		AND scoreVersion = ?1",
     )?;
 

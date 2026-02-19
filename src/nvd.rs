@@ -430,7 +430,7 @@ async fn nvd_parse_and_populate_database(
         )?;
 
         let mut stmt2 = tx.prepare_cached(
-            "INSERT INTO MapVulnerabilityWeakness (VulnerabilityId, WeaknessId) VALUES (?1, ?2)",
+            "INSERT INTO MapVulnerabilityWeakness (VulnerabilityId, WeaknessId, `Primary`) VALUES (?1, ?2, ?3)",
         )?;
 
         for v in feed.vulnerabilities {
@@ -674,8 +674,7 @@ async fn nvd_parse_and_populate_database(
             let mut inserted: Vec<i32> = Vec::new();
             if let Some(weaknesses) = &cve.weaknesses {
                 for weakness in weaknesses {
-                    if weakness.type_ == "Primary" {
-                        for description in weakness
+                    for description in weakness
                             .description
                             .iter()
                             .filter(|d| d.lang == "en" && d.value.starts_with("CWE-"))
@@ -684,11 +683,11 @@ async fn nvd_parse_and_populate_database(
                                 description.value.trim_start_matches("CWE-").parse::<i32>()
                                 && !inserted.contains(&tmp_weakness)
                             {
-                                stmt2.execute(params![vuln_id, tmp_weakness])?;
+                                stmt2.execute(params![vuln_id, tmp_weakness, weakness.type_ == "Primary"])?;
                                 inserted.push(tmp_weakness);
                             }
                         }
-                    }
+                    
                 }
             }
 

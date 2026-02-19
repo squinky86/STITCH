@@ -199,7 +199,8 @@ scoreVersion INTEGER NOT NULL DEFAULT 0 CHECK(scoreVersion IN (0, 2, 3, 4))
         "CREATE TABLE IF NOT EXISTS MapVulnerabilityWeakness (
 VulnerabilityId INTEGER,
 WeaknessId INTEGER,
-PRIMARY KEY(VulnerabilityId,WeaknessId),
+`Primary` INTEGER NOT NULL DEFAULT 1,
+PRIMARY KEY(VulnerabilityId,WeaknessId,`Primary`),
 FOREIGN KEY(VulnerabilityId) REFERENCES Vulnerability(id) ON DELETE CASCADE,
 FOREIGN KEY(WeaknessId) REFERENCES Weakness(id)
 );",
