@@ -483,7 +483,7 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
                 .filter_map(std::result::Result::ok)
                 .collect();
 
-            let (status, finding_details) = if ids.contains(&stigcheck.disa_id) {
+            let (status, finding_details) = if ids.iter().any(|id| stigcheck.disa_id.starts_with(id)) {
                 ("open".to_string(), "|organization| identified findings against this check.".to_string())
             } else {
                 ("not_reviewed".to_string(), String::new())
@@ -1117,7 +1117,7 @@ fn score_from_stig(stig_id: &str, db_path: &str, args: &Args) -> Result<()> {
 		JOIN MapSTIGCheckCCI ON STIGCheck.id = MapSTIGCheckCCI.STIGCheckId
 		JOIN RMFCCI ON MapSTIGCheckCCI.CCIId = RMFCCI.id
 		JOIN RMFControl ON RMFCCI.RMFControlId = RMFControl.id
-        WHERE STIGCheck.DISAId = ?1",
+        WHERE STIGCheck.DISAId LIKE (?1 || '%')",
         )?;
 
         let stig_data_elements = stmt_stig.query_map(params![stig_id_query], |row| {
