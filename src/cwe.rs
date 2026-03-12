@@ -78,6 +78,7 @@ async fn cwe_parse_and_populate_database(
     let mut capture_text = false;
 
     let mut has_other: bool = false;
+    let mut has_scope: bool = false;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -163,10 +164,13 @@ async fn cwe_parse_and_populate_database(
                                 p(format!("Parsed: CWE-{}", weakness.id).as_str(), true);
                             }
                             //If it is a class not mapped to any impact, assume it maps to all impacts.
+                            //Only apply this fallback if no scope was defined at all;
+                            //CWEs that explicitly list non-CIA scopes (e.g., "Other") are intentionally without CIA impact.
                             if weakness.abstraction == "Class"
                                 && !weakness.confidentiality
                                 && !weakness.integrity
                                 && !weakness.availability
+                                && !has_scope
                             {
                                 weakness.confidentiality = true;
                                 weakness.integrity = true;
@@ -174,6 +178,7 @@ async fn cwe_parse_and_populate_database(
                             }
                             cwe_entries.push(weakness);
                             has_other = false;
+                            has_scope = false;
                         }
                     }
                     "Description" => {
@@ -189,6 +194,7 @@ async fn cwe_parse_and_populate_database(
                         capture_text = false;
                     }
                     "Scope" => {
+                        has_scope = true;
                         if let Some(weakness) = current_weakness.as_mut() {
                             match text_buffer.trim() {
                                 "Confidentiality" => weakness.confidentiality = true,
