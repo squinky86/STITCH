@@ -79,7 +79,7 @@ The CWE and CVE data are indexed from their respective data feed.
 
 ### 4.1.1 CWE Indexing
 
-Modifications to the CWE data are made such that CWEs, such as some Classes, with varying, `Other` impacts are assumed to be able to impact all three factors of Confidentiality, Integrity, and Availability. All other CWE data is used as-is. Additional impact rules to follow are:
+Modifications to the CWE data are made such that CWEs with an `Other` scope and a `Varies by Context` impact are assumed to be able to impact all three factors of Confidentiality, Integrity, and Availability. Additionally, Class-level CWEs that have no defined scope at all are assumed to impact all three. All other CWE data is used as-is. Additional impact rules to follow are:
 
 * CWEs that have an impact of `Authentication` or `Authorization` affect Confidentiality, Integrity, and Availability.
 * CWEs that affect `Access Control` affect Confidentiality and Integrity.
