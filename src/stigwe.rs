@@ -11,6 +11,24 @@ use std::collections::HashMap;
 use tempfile::NamedTempFile;
 use tokio::fs;
 
+/// Escapes SQL LIKE wildcards (`%`, `_`) and the escape character itself in
+/// `pattern`. The caller must use `ESCAPE '\'` in its LIKE clause for this to
+/// take effect. Defense in depth: prevents any future malformed STIG ID from
+/// turning a single-row update into a wildcard mass-update.
+fn escape_like(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len());
+    for c in pattern.chars() {
+        match c {
+            '\\' | '%' | '_' => {
+                out.push('\\');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 //store data of YAML parsing
 #[derive(Debug, Deserialize)]
 struct Mappings {
@@ -77,18 +95,17 @@ async fn stigwe_parse_and_populate_database(yaml: &NamedTempFile, conn: &Connect
         bar.inc(1);
         for cwe_mapping in &mapping.cwe_ids {
             if cwe_mapping.default {
-                let cwe_id = cwe_mapping
-                    .id
-                    .trim_start_matches("CWE-")
-                    .parse::<u32>()
-                    .context("Failed to parse CWE ID")?;
+                let Ok(cwe_id) = cwe_mapping.id.trim_start_matches("CWE-").parse::<u32>() else {
+                    // Skip individual bad entries instead of aborting the whole build.
+                    continue;
+                };
 
                 conn.execute(
-                    "UPDATE STIGCheck 
-                     SET CWEId = ?1 
-                     WHERE DISAId LIKE ?2 
+                    "UPDATE STIGCheck
+                     SET CWEId = ?1
+                     WHERE DISAId LIKE ?2 ESCAPE '\\'
                      AND CWEId IS NULL",
-                    params![cwe_id, format!("{}%", stig_id)],
+                    params![cwe_id, format!("{}%", escape_like(stig_id))],
                 )?;
             }
         }
@@ -112,21 +129,20 @@ async fn stigwe_parse_and_populate_database(yaml: &NamedTempFile, conn: &Connect
         bar2.inc(1);
         for stig_mapping in &mapping.stig_ids {
             if stig_mapping.default {
-                let cwe_num = cwe_id
-                    .trim_start_matches("CWE-")
-                    .parse::<u32>()
-                    .context("Failed to parse CWE ID")?;
+                let Ok(cwe_num) = cwe_id.trim_start_matches("CWE-").parse::<u32>() else {
+                    continue;
+                };
 
                 conn.execute(
-                    "UPDATE Weakness 
+                    "UPDATE Weakness
                      SET STIGCheckId = (
-                         SELECT id 
-                         FROM STIGCheck 
-                         WHERE DISAId LIKE ?1
+                         SELECT id
+                         FROM STIGCheck
+                         WHERE DISAId LIKE ?1 ESCAPE '\\'
                          LIMIT 1
                      )
                      WHERE id = ?2",
-                    params![format!("{}%", stig_mapping.id), cwe_num],
+                    params![format!("{}%", escape_like(&stig_mapping.id)), cwe_num],
                 )?;
             }
         }

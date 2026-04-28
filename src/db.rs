@@ -9,9 +9,24 @@ use rusqlite::Connection;
 pub fn create_database(db_path: &str) -> Result<Connection> {
     p("Creating SQLite database…", false);
 
-    // Delete the database file if it exists
-    if std::path::Path::new(db_path).exists() {
-        std::fs::remove_file(db_path).context("Failed to delete existing database file")?;
+    // Reject a pre-existing symlink at the destination: an attacker who can
+    // write to the parent directory could otherwise race the gap between the
+    // existence check and the open, redirecting the new database into a path
+    // of their choosing.
+    match std::fs::symlink_metadata(db_path) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() {
+                return Err(anyhow::anyhow!(
+                    "Refusing to write database to symlink path: {}",
+                    db_path
+                ));
+            }
+            std::fs::remove_file(db_path).context("Failed to delete existing database file")?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(e).context(format!("Failed to inspect existing database path: {}", db_path));
+        }
     }
     let conn = Connection::open(db_path).context("Failed to create database")?;
 

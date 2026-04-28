@@ -7,12 +7,36 @@ use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use tempfile::NamedTempFile;
 use tokio::time::{Duration, sleep};
 use zip::ZipArchive;
 
 const MAX_RETRIES: u32 = 5;
+
+/// Hard cap on bytes written by any single decompression (gzip or zip member).
+/// Sized to comfortably exceed real-world feeds (largest current NVD year is ~1 GB
+/// uncompressed) while still bounding decompression-bomb damage.
+const MAX_DECOMPRESSED_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+/// Hard cap on bytes accepted from a single HTTP response. NVD year files are
+/// the largest legitimate downloads (~100 MB gzipped); 2 GB leaves headroom.
+const MAX_DOWNLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Copies bytes from `reader` to `writer`, refusing to write more than `limit`
+/// bytes. Returns an error if the cap is reached, so a decompression bomb fails
+/// fast rather than exhausting disk.
+fn copy_capped<R: Read, W: Write>(reader: &mut R, writer: &mut W, limit: u64) -> Result<u64> {
+    let mut capped = reader.take(limit + 1);
+    let written = std::io::copy(&mut capped, writer).context("Failed during bounded copy")?;
+    if written > limit {
+        return Err(anyhow::anyhow!(
+            "Refusing to write more than {} bytes (decompression bomb?)",
+            limit
+        ));
+    }
+    Ok(written)
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -28,7 +52,7 @@ pub struct Args {
 
 pub async fn decompress_gzip(input: &NamedTempFile, output: &mut NamedTempFile) -> Result<()> {
     let mut gz = GzDecoder::new(std::fs::File::open(input.path())?);
-    std::io::copy(&mut gz, output.as_file_mut())?;
+    copy_capped(&mut gz, output.as_file_mut(), MAX_DECOMPRESSED_BYTES)?;
     output.as_file_mut().sync_all()?;
     Ok(())
 }
@@ -54,10 +78,17 @@ pub async fn download_file(
 
         match response {
             Ok(res) => {
-                if res.status().is_server_error() {
+                let status = res.status();
+                // Retry transient failures (5xx, 408, 429); fail fast on other 4xx
+                // so a 404/410 doesn't get its HTML body written into the temp file
+                // and parsed as XML/JSON later.
+                let retryable = status.is_server_error()
+                    || status == reqwest::StatusCode::REQUEST_TIMEOUT
+                    || status == reqwest::StatusCode::TOO_MANY_REQUESTS;
+                if retryable {
                     retries += 1;
                     if retries < MAX_RETRIES {
-                        p(format!("Download failed with status {} (retry {}/{}), retrying in 5 seconds...", res.status(), retries, MAX_RETRIES).as_str(), true);
+                        p(format!("Download failed with status {} (retry {}/{}), retrying in 5 seconds...", status, retries, MAX_RETRIES).as_str(), true);
                         sleep(Duration::from_secs(5)).await;
                         continue;
                     } else {
@@ -66,6 +97,13 @@ pub async fn download_file(
                             url
                         ));
                     }
+                }
+                if !status.is_success() {
+                    return Err(anyhow::anyhow!(
+                        "Failed to download {}: HTTP status {}",
+                        url,
+                        status
+                    ));
                 }
                 break res;
             }
@@ -112,8 +150,17 @@ pub async fn download_file(
     }
 
     let mut stream = response.bytes_stream();
+    let mut downloaded: u64 = 0;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("Failed to read chunk")?;
+        downloaded = downloaded.saturating_add(chunk.len() as u64);
+        if downloaded > MAX_DOWNLOAD_BYTES {
+            return Err(anyhow::anyhow!(
+                "Refusing to download more than {} bytes from {}",
+                MAX_DOWNLOAD_BYTES,
+                url
+            ));
+        }
         file.as_file_mut()
             .write_all(&chunk)
             .context("Failed to write chunk to file")?;
@@ -152,7 +199,7 @@ pub fn extract_from_zip(
         match archive.by_index(i) {
             Ok(mut file) => {
                 if file.name().ends_with(ext) {
-                    std::io::copy(&mut file, xml_file.as_file_mut())
+                    copy_capped(&mut file, xml_file.as_file_mut(), MAX_DECOMPRESSED_BYTES)
                         .context(format!("Failed to extract {} file", ext))?;
                     break;
                 }
@@ -175,6 +222,7 @@ pub fn p(s: &str, newline: bool) {
         println!("{}", s);
     } else {
         print!("{}", s);
-        io::stdout().flush().unwrap();
+        // Ignore flush errors so a closed downstream pipe doesn't panic the build.
+        let _ = io::stdout().flush();
     }
 }

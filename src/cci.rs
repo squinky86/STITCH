@@ -58,39 +58,30 @@ pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
 }
 
 fn extract_control_identifier(input: &str) -> String {
-    // get_rmf_regex().captures() attempts to match the regex at the beginning of the string.
-    get_rmf_regex().captures(input).map_or_else(String::new, |caps| {
-        // --- Get RMF Family (Group 1) ---
-        // We can unwrap() because a successful match guarantees Group 1 exists.
-        let family = caps.get(1).unwrap().as_str();
+    // The regex matches `\d+`, which can produce digit runs that overflow u32
+    // (e.g., "AC-9999999999"). On overflow we return an empty string so the
+    // caller treats the row as unrecognized rather than panicking the build.
+    let Some(caps) = get_rmf_regex().captures(input) else {
+        return String::new();
+    };
+    let family = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+    let Some(control_num_str) = caps.get(2).map(|m| m.as_str()) else {
+        return String::new();
+    };
+    let Ok(control_num) = control_num_str.parse::<u32>() else {
+        return String::new();
+    };
 
-        // --- Get RMF Control Number (Group 2) ---
-        // We also know Group 2 is guaranteed to exist.
-        let control_num_str = caps.get(2).unwrap().as_str();
+    let mut result = format!("{}-{}", family, control_num);
 
-        // Parse the string to a number (e.g., u32). This beautifully
-        // handles normalization (e.g., "03" becomes 3).
-        // We can unwrap() the parse because the regex (\d+) guarantees it's a valid number.
-        let control_num: u32 = control_num_str.parse().unwrap();
+    if let Some(enhancement_match) = caps.get(3) {
+        let Ok(enhancement_num) = enhancement_match.as_str().parse::<u32>() else {
+            return String::new();
+        };
+        result.push_str(&format!("({})", enhancement_num));
+    }
 
-        // Start building the result string using the normalized number.
-        let mut result = format!("{}-{}", family, control_num);
-
-        // --- Get Optional RMF Enhancement (Group 3) ---
-        // Group 3 is optional, so we must check if it was captured.
-        if let Some(enhancement_match) = caps.get(3) {
-            let enhancement_str = enhancement_match.as_str();
-
-            // Parse to normalize the enhancement number (e.g., "01" becomes 1).
-            let enhancement_num: u32 = enhancement_str.parse().unwrap();
-
-            // Append the formatted enhancement directly to the result string.
-            result.push_str(&format!("({})", enhancement_num));
-        }
-
-        // Return the final, formatted string.
-        result
-    })
+    result
 }
 
 async fn cci_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection) -> Result<()> {
