@@ -16,6 +16,14 @@ use std::{
 };
 use uuid::Uuid;
 
+/// Minimum number of CVEs that must be associated with a CWE before a score
+/// is emitted. Below this, no score is produced. See `doc/scoring.md` §4.2.1.
+const MINIMUM_CVES_TO_SCORE: usize = 5;
+
+/// Minimum CVE pool size that lets a step short-circuit further data-gathering
+/// within the current round. See `doc/scoring.md` §4.2.1.
+const MINIMUM_CVES_TO_COMPLETE_ROUND: usize = 50;
+
 fn get_controls_from_controls(controls: Vec<String>, db_path: &str) -> Result<()> {
     let conn = Connection::open(db_path)
         .with_context(|| format!("Failed to open database file: {}", db_path))?;
@@ -1205,9 +1213,6 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 
 /// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
 fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> Result<()> {
-    let min_results_to_get_more = 50;
-    let min_results_to_score = 5;
-
     if cwe_data.is_empty() {
         eprintln!("Invalid CWE data provided");
         return Ok(());
@@ -1268,7 +1273,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
     }
 
     // ROUND 1.2: Conversion of direct CVSS 3.0 and 3.1 scores
-    if cves.len() < min_results_to_get_more {
+    if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
         let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 3, cwe_data_flatened.id)?;
 
         if args.verbose {
@@ -1278,7 +1283,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
     }
 
     // ROUND 1.3: Conversion of direct CVSS 2.0 scores
-    if cves.len() < min_results_to_get_more {
+    if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
         let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 2, cwe_data_flatened.id)?;
         if args.verbose {
             println!("1.3: Found {} CVSS 2.0 CVEs.", tmp_cves.len());
@@ -1290,7 +1295,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
 
     // ROUND 2: Progeny CWEs of View 1000
     // Iterate one generation at a time until there are enough CVEs to score.
-    if cves.len() < min_results_to_score {
+    if cves.len() < MINIMUM_CVES_TO_SCORE {
         if args.verbose {
             println!("Starting Round 2 Scoring.");
         }
@@ -1309,7 +1314,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
                 cves.extend(tmp_cves);
             }
 
-            if cves.len() < min_results_to_get_more {
+            if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
                 // ROUND 2.2: Child CWEs of View 1000 CVSS 3.1 and 3.0 scores
                 for child in &next_generation_cwes {
                     let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 3, *child)?;
@@ -1320,7 +1325,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
                 }
             }
 
-            if cves.len() < min_results_to_get_more {
+            if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
                 // ROUND 2.3: Child CWEs of View 1000 CVSS 2 scores
                 for child in &next_generation_cwes {
                     let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 2, *child)?;
@@ -1333,7 +1338,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
 
             // Iterate the next round of children if there are any
             processed_cwes.extend(next_generation_cwes.clone());
-            if cves.len() < min_results_to_score {
+            if cves.len() < MINIMUM_CVES_TO_SCORE {
                 let mut tmp_next_generation_cwes: Vec<u32> = Vec::new();
                 for n in &next_generation_cwes {
                     let child_cwes: Vec<u32> = get_child_cwes(&conn, *n, 1000)?;
@@ -1349,9 +1354,12 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
         }
     }
 
-    // ROUND 3: Parent/Ancestor CWEs of View 1000
-    // Iterate one generation at a time until there are enough CVEs to score.
-    if cves.len() < min_results_to_score {
+    // ROUND 3: Ancestor and Cousin CWEs of View 1000.
+    // For each ancestor generation: process the ancestors themselves (steps
+    // 3.1-3.3); if still short of MINIMUM_CVES_TO_SCORE, process those
+    // ancestors' children (cousins of the original CWE) at steps 3.4-3.6.
+    // Then iterate one generation deeper.
+    if cves.len() < MINIMUM_CVES_TO_SCORE {
         if args.verbose {
             println!("Starting Round 3 Scoring.");
         }
@@ -1371,7 +1379,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
                 cves.extend(tmp_cves);
             }
 
-            if cves.len() < min_results_to_get_more {
+            if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
                 // ROUND 3.2: Parent/Ancestor CWEs of View 1000 CVSS 3.1 and 3.0 scores
                 for parent in &prev_generation_cwes {
                     let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 3, *parent)?;
@@ -1382,7 +1390,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
                 }
             }
 
-            if cves.len() < min_results_to_get_more {
+            if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
                 // ROUND 3.3: Parent/Ancestor CWEs of View 1000 CVSS 2 scores
                 for parent in &prev_generation_cwes {
                     let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 2, *parent)?;
@@ -1395,12 +1403,9 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
 
             processed_cwes.extend(prev_generation_cwes.clone());
 
-            if cves.len() < min_results_to_score {
-                if args.verbose {
-                    println!("Starting Round 4 Scoring.");
-                }
+            if cves.len() < MINIMUM_CVES_TO_SCORE {
                 let mut sibling_cwes: Vec<u32> = Vec::new();
-                // ROUND 4.1: Sibling/Cousin CWEs of View 1000 CVSS 4.0 scores
+                // ROUND 3.4: Cousin CWEs of View 1000 CVSS 4.0 scores
                 for parent in &prev_generation_cwes {
                     sibling_cwes.extend(get_child_cwes(&conn, *parent, 1000)?);
                     sibling_cwes.sort();
@@ -1413,30 +1418,30 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
                 for sibling in &sibling_cwes {
                     let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 4, *sibling)?;
                     if args.verbose {
-                        println!("4.1: Found {} CVSS 4.0 CVEs.", tmp_cves.len());
+                        println!("3.4: Found {} CVSS 4.0 CVEs.", tmp_cves.len());
                     }
                     cves.extend(tmp_cves);
                 }
 
-                if cves.len() < min_results_to_get_more {
-                    // ROUND 4.2: Sibling CWEs of View 1000 CVSS 3.0 and 3.1 scores
+                if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
+                    // ROUND 3.5: Cousin CWEs of View 1000 CVSS 3.0 and 3.1 scores
                     for sibling in &sibling_cwes {
                         let tmp_cves: Vec<CvssDataV40> =
                             get_cve_data_by_weakness(&conn, 3, *sibling)?;
                         if args.verbose {
-                            println!("4.2: Found {} CVSS 3.0 and 3.1 CVEs.", tmp_cves.len());
+                            println!("3.5: Found {} CVSS 3.0 and 3.1 CVEs.", tmp_cves.len());
                         }
                         cves.extend(tmp_cves);
                     }
                 }
 
-                if cves.len() < min_results_to_get_more {
-                    // ROUND 3.6: Sibling CWEs of View 1000 CVSS 2.0 scores
+                if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
+                    // ROUND 3.6: Cousin CWEs of View 1000 CVSS 2.0 scores
                     for sibling in sibling_cwes {
                         let tmp_cves: Vec<CvssDataV40> =
                             get_cve_data_by_weakness(&conn, 2, sibling)?;
                         if args.verbose {
-                            println!("4.3: Found {} CVSS 2.0 CVEs.", tmp_cves.len());
+                            println!("3.6: Found {} CVSS 2.0 CVEs.", tmp_cves.len());
                         }
                         cves.extend(tmp_cves);
                     }
@@ -1444,7 +1449,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
             }
 
             // Iterate the next round of ancestors if there are any
-            if cves.len() < min_results_to_score {
+            if cves.len() < MINIMUM_CVES_TO_SCORE {
                 let mut tmp_prev_generation_cwes: Vec<u32> = Vec::new();
                 for p in &prev_generation_cwes {
                     let parent_cwes: Vec<u32> = get_parent_cwes(&conn, *p, 1000)?;
@@ -1460,9 +1465,12 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
         }
     }
 
-    if cves.len() < min_results_to_score {
+    if cves.len() < MINIMUM_CVES_TO_SCORE {
         if args.verbose {
-            println!("Unable to score with fewer than 5 CVEs.");
+            println!(
+                "Unable to score with fewer than {} CVEs.",
+                MINIMUM_CVES_TO_SCORE
+            );
         } else {
             println!(
                 "{},\"{}\",{},N/A,{},{},\"{}\",\"{}\",{:.1}",

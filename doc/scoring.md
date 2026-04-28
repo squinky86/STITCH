@@ -5,7 +5,7 @@
 
 | Version | Date       | Author(s) | Remarks                |
 | :------ | :--------- | :-------- | :--------------------- |
-| 0.1.0   | 2025-10-19 | Jon Hood  | Initial Public Release |
+| 0.1.0   | 2026-04-28 | Jon Hood  | Initial Public Release |
 
 ## Copyright, Acknowledgements, and Licensing Information
 
@@ -79,11 +79,11 @@ The CWE and CVE data are indexed from their respective data feed.
 
 ### 4.1.1 CWE Indexing
 
-Modifications to the CWE data are made such that CWEs with an `Other` scope and a `Varies by Context` impact are assumed to be able to impact all three factors of Confidentiality, Integrity, and Availability. Additionally, Class-level CWEs that have no defined scope at all are assumed to impact all three. All other CWE data is used as-is. Additional impact rules to follow are:
+Modifications to the CWE data are made such that CWEs with an `Other` scope and a `Varies by Context` impact are assumed to be able to impact all three factors of Confidentiality, Integrity, and Availability. Additionally, Class-abstraction CWEs for which no scope at all is defined in the source data are assumed to impact all three. All other CWE data is used as-is. Additional scope-to-impact rules are applied:
 
-* CWEs that have an impact of `Authentication` or `Authorization` affect Confidentiality, Integrity, and Availability.
-* CWEs that affect `Access Control` affect Confidentiality and Integrity.
-* CWEs that affect `Non-Repudiation` affect Integrity.
+* CWEs whose scope is `Authentication` or `Authorization` affect Confidentiality, Integrity, and Availability.
+* CWEs whose scope is `Access Control` affect Confidentiality and Integrity.
+* CWEs whose scope is `Accountability` or `Non-Repudiation` affect Integrity.
 
 ### 4.1.2 CVE Indexing
 
@@ -110,8 +110,9 @@ When the highest primary score is in CVSS version 2.0, the following conversions
 | AC: `MEDIUM` | AC: `LOW`, AT: `PRESENT` |
 | AC: `HIGH` | AC: `HIGH`, AT: `PRESENT` |
 | Authentication (AU) | Privileges Required (PR) |
-| AU: `MULTIPLE` | PR: `HIGH` |
+| AU: `NONE` | PR: `NONE` |
 | AU: `SINGLE` | PR: `LOW` |
+| AU: `MULTIPLE` | PR: `HIGH` |
 | C, I, A Impact (C, I, A) | Vulnerability C, I, A Impact (VC, VI, VA) |
 | C, I, A: `PARTIAL` | VC, VI, VA: `LOW` |
 | C, I, A: `COMPLETE` | VC, VI, VA: `HIGH` |
@@ -122,11 +123,14 @@ The NVD also keeps up with the following attributes which can assist in CVSS 4.0
 | :--- | :--- |
 | User Interaction Required | User Interaction (UI) |
 | User Interaction Required true | UI: `ACTIVE` |
-| Obtain All Privilege, Obtain User Privilege, and Obtain Other Privilege | Subsystem C, I, and A (SC, SI, SA) |
-| Obtain All Privilege | SC, SI, SA: `HIGH` |
-| Obtain User Privilege | SC, SI, SA: `LOW` (when Obtain All Privilege is not set) |
-| Obtain Other Privilege | SC, SI, SA: `LOW` (when Obtain All Privilege is not set) |
-| Obtain All/User/Other Privilege is NOT set | SC, SI, SA: `NONE` |
+The Subsystem C, I, and A (SC, SI, SA) values are derived from the three CVSS 2.0 `obtainAllPrivilege` / `obtainUserPrivilege` / `obtainOtherPrivilege` flags as follows. All three SC/SI/SA values are set to the same value in every row.
+
+| `obtainAllPrivilege` | `obtainUserPrivilege` | `obtainOtherPrivilege` | SC, SI, SA |
+| :---: | :---: | :---: | :--- |
+| true  | *     | *     | `HIGH` |
+| false | true  | *     | `LOW`  |
+| false | false | true  | `LOW`  |
+| false | false | false | `NONE` |
 
 ## 4.2 Score Estimation
 
@@ -168,37 +172,45 @@ CVEs with a Primary NVD Score using CVSS 3.0 or 3.1 mapped to the CWE's progeny 
 
 CVEs with a Primary NVD Score using CVSS 2.0 mapped to the CWE's progeny generation are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
 
-#### 4.2.1.3 Round 3: Ancestor CVEs
+#### 4.2.1.3 Round 3: Ancestor and Cousin CVEs
 
-During Round 3, CVEs directly mapped to the CWE's ancestor generations are evaluated. Note that Round 3 is only iterated for increasingly distant ancestor CWEs after the completion of Round 4 using only ancestors associated with the CWE-1000 View. The ancestors of the CWE under consideration proceed through the steps of Round 3.
+During Round 3, CVEs directly mapped to the CWE's ancestor generations and to the children of those ancestors (cousins of the original CWE) are evaluated. Only CWEs associated with the CWE-1000 View are considered. The traversal is performed one ancestor generation at a time, and within each generation the ancestors are processed first.
+
+For each ancestor generation:
+
+1. Steps 3.1, 3.2, and 3.3 are performed in order against the ancestors at this generation. As with Rounds 1 and 2, a step is skipped when the CVE pool already contains at least `MINIMUM_CVES_TO_COMPLETE_ROUND` CVEs at the time the step would begin.
+2. If, after the ancestor steps, the CVE pool is still below `MINIMUM_CVES_TO_SCORE`, the ancestors' direct children — the cousins of the original CWE at this generation — are evaluated through Steps 3.4, 3.5, and 3.6. The same `MINIMUM_CVES_TO_COMPLETE_ROUND` short-circuit applies between cousin steps.
+3. If, after the cousin steps, the CVE pool is still below `MINIMUM_CVES_TO_SCORE`, the next-more-distant ancestor generation is computed and the round is repeated.
+
+Concretely: parents are processed first, then — if still short — the original CWE's siblings; then grandparents, then — if still short — first cousins; then great-grandparents, then second cousins; and so on, until the CVE pool reaches `MINIMUM_CVES_TO_SCORE` or all ancestor generations are exhausted.
+
+As the CWE data may contain loops and to avoid counting CVEs multiple times, ancestors and cousins that have already been traversed are removed from consideration for subsequent generations.
 
 ##### 4.2.1.3.1 Round 3 Step 1: Ancestor CVEs with CVSS 4.0 Scores
 
-CVEs with a Primary NVD Score using CVSS 4.0 mapped to the CWE's ancestor generation are obtained and added to the list of CVEs to use to score the CWE.
+CVEs with a Primary NVD Score using CVSS 4.0 mapped to the current ancestor generation are obtained and added to the list of CVEs to use to score the CWE.
 
 ##### 4.2.1.3.2 Round 3 Step 2: Ancestor CVEs with CVSS 3.0 or CVSS 3.1 Scores
 
-CVEs with a Primary NVD Score using CVSS 3.0 or 3.1 mapped to the CWE's ancestor generation are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
+CVEs with a Primary NVD Score using CVSS 3.0 or 3.1 mapped to the current ancestor generation are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
 
 ##### 4.2.1.3.3 Round 3 Step 3: Ancestor CVEs with CVSS 2.0 Scores
 
-CVEs with a Primary NVD Score using CVSS 2.0 mapped to the CWE's ancestor generation are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
+CVEs with a Primary NVD Score using CVSS 2.0 mapped to the current ancestor generation are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
 
-#### 4.2.1.4 Round 4: Cousin CVEs
+##### 4.2.1.3.4 Round 3 Step 4: Cousin CVEs with CVSS 4.0 Scores
 
-During Round 4, CVEs directly mapped to the CWE's ancestor generation's direct children are evaluated. The cousins of the CWE under consideration proceed through the steps of Round 4. If there are not at least `MINIMUM_CVES_TO_SCORE` after a round, the previous generation of ancestors repeat at Round 3. This progresses until all ancestors are evaluated. As the CWE data may contain loops and to avoid counting CVEs multiple times, ancestors and cousins that have already been traversed are removed from consideration for subsequent rounds. I.E., Round 3 is performed for parent CWEs, then Round 4 is performed for all siblings, then Round 3 is performed for all grandparent CWEs, then round 4 is performed for all first cousins, then great-grandparents and second cousins, etc. until all ancestor generations of CWEs are exhausted.
+If the CVE pool is below `MINIMUM_CVES_TO_SCORE` after Steps 3.1 through 3.3 for the current generation, the direct children of the current ancestor generation (cousins of the original CWE at this generation) are evaluated.
 
-##### 4.2.1.4.1 Round 4 Step 1: Cousin CVEs with CVSS 4.0 Scores
+CVEs with a Primary NVD Score using CVSS 4.0 mapped to those cousins are obtained and added to the list of CVEs to use to score the CWE.
 
-CVEs with a Primary NVD Score using CVSS 4.0 mapped to the CWE's ancestor generation children (cousins) are obtained and added to the list of CVEs to use to score the CWE.
+##### 4.2.1.3.5 Round 3 Step 5: Cousin CVEs with CVSS 3.0 or CVSS 3.1 Scores
 
-##### 4.2.1.4.2 Round 4 Step 2: Cousin CVEs with CVSS 3.0 or CVSS 3.1 Scores
+CVEs with a Primary NVD Score using CVSS 3.0 or 3.1 mapped to the cousins identified in Step 3.4 are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
 
-CVEs with a Primary NVD Score using CVSS 3.0 or 3.1 mapped to the CWE's ancestor generation children (cousins) are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
+##### 4.2.1.3.6 Round 3 Step 6: Cousin CVEs with CVSS 2.0 Scores
 
-##### 4.2.1.4.3 Round 4 Step 3: Cousin CVEs with CVSS 2.0 Scores
-
-CVEs with a Primary NVD Score using CVSS 2.0 mapped to the CWE's ancestor generation children (cousins) are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
+CVEs with a Primary NVD Score using CVSS 2.0 mapped to the cousins identified in Step 3.4 are obtained, converted to CVSS 4.0 scores using the conversion process in Section 4.1.2, and added to the list of CVEs to use to score the CWE.
 
 ### 4.2.2 Estimating the Score
 
@@ -209,22 +221,22 @@ With the set of CVEs obtained from Section 4.2.1, the parameters for a new CVSS 
 * Attack Requirements (AR) is set to the mode of Attack Requirements in the set of CVEs.
 * Privileges Required (PR) is set to the mode of Privileges Required in the set of CVEs.
 * User Interaction (UI) is set to the mode of User Interactions in the set of CVEs.
-* Confidentiality Impact to the Vulnerable System (VC) is set to the weighted mean of Confidentiality Impacts to the Vulnerable System in the set of CVEs. The weighted mean formula is defined in Section 4.2.2.1.
-* Integrity Impact to the Vulnerable System (VI) is set to the weighted mean of Integrity Impacts to the Vulnerable System in the set of CVEs.
-* Availability Impact to the Vulnerable System (VA) is set to the weighted mean of Availability Impacts to the Vulnerable System in the set of CVEs.
-* Confidentiality Impact to the Subsequent System (SC) is set to the weighted mean of Confidentiality Impacts to the Subsequent System in the set of CVEs.
-* Integrity Impact to the Subsequent System (SI) is set to the weighted mean of Integrity Impacts to the Subsequent System in the set of CVEs.
-* Availability Impact to the Subsequent System (SA) is set to the weighted mean of Availability Impacts to the Subsequent System in the set of CVEs.
+* Confidentiality Impact to the Vulnerable System (VC) is set to the categorical mean of Confidentiality Impacts to the Vulnerable System in the set of CVEs. The categorical mean formula is defined in Section 4.2.2.1.
+* Integrity Impact to the Vulnerable System (VI) is set to the categorical mean of Integrity Impacts to the Vulnerable System in the set of CVEs.
+* Availability Impact to the Vulnerable System (VA) is set to the categorical mean of Availability Impacts to the Vulnerable System in the set of CVEs.
+* Confidentiality Impact to the Subsequent System (SC) is set to the categorical mean of Confidentiality Impacts to the Subsequent System in the set of CVEs.
+* Integrity Impact to the Subsequent System (SI) is set to the categorical mean of Integrity Impacts to the Subsequent System in the set of CVEs.
+* Availability Impact to the Subsequent System (SA) is set to the categorical mean of Availability Impacts to the Subsequent System in the set of CVEs.
 
-#### 4.2.2.1 Weighted Mean Calculation
+#### 4.2.2.1 Categorical Mean Calculation
 
-CVEs with an impact of `HIGH` are weighted with a value of 3. CVEs with an impact of `LOW` are weighted with a value of 1. CVEs with an impact of `NONE` are weighted with a value of 0. The average of these weights (w) is the sum of all values (v) divided by the total number of CVEs (n).
+CVEs with an impact of `HIGH` are assigned an ordinal value of 3. CVEs with an impact of `LOW` are assigned an ordinal value of 1. CVEs with an impact of `NONE` are assigned an ordinal value of 0. The arithmetic mean of these ordinal values (w) is the sum of all values (v) divided by the total number of CVEs (n).
 
 $$
 w = \frac{\sum_{i=1}^{n} v_i}{n}
 $$
 
-When w is less than 0.33, the mean weight is set to `NONE`. When w is 0.33 to less than 2.0, the mean weight is set to `LOW`. When w is 2.0 or greater, the mean weight is set to `HIGH`.
+When w is less than 0.33, the categorical mean is set to `NONE`. When w is 0.33 to less than 2.0, the categorical mean is set to `LOW`. When w is 2.0 or greater, the categorical mean is set to `HIGH`.
 
 ## 4.3 Supplemental Information
 
