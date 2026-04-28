@@ -13,6 +13,8 @@ use tokio::time::{Duration, sleep};
 use zip::ZipArchive;
 
 const MAX_RETRIES: u32 = 5;
+const REQUEST_TIMEOUT_SECS: u64 = 120;
+const USER_AGENT: &str = concat!("STITCH/", env!("CARGO_PKG_VERSION"));
 
 /// Hard cap on bytes written by any single decompression (gzip or zip member).
 /// Sized to comfortably exceed real-world feeds (largest current NVD year is ~1 GB
@@ -22,6 +24,11 @@ const MAX_DECOMPRESSED_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// Hard cap on bytes accepted from a single HTTP response. NVD year files are
 /// the largest legitimate downloads (~100 MB gzipped); 2 GB leaves headroom.
 const MAX_DOWNLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Default URL for the ASD STIG zip. DISA versions this in the URL path, so
+/// override with `--stig-url` when DISA cuts a new revision.
+pub const DEFAULT_STIG_URL: &str =
+    "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_ASD_V6R4_STIG.zip";
 
 /// Copies bytes from `reader` to `writer`, refusing to write more than `limit`
 /// bytes. Returns an error if the cap is reached, so a decompression bomb fails
@@ -45,6 +52,11 @@ pub struct Args {
     #[arg(short, long, default_value = "stitch.db")]
     pub output: String,
 
+    /// Override the ASD STIG zip URL. Defaults to the V6R4 release on DISA's
+    /// public site; override when DISA releases a new revision.
+    #[arg(long, default_value = DEFAULT_STIG_URL)]
+    pub stig_url: String,
+
     /// Verbose output
     #[arg(short, long)]
     pub verbose: bool,
@@ -66,7 +78,11 @@ pub async fn download_file(
 ) -> Result<()> {
     let mut progress_bar: Option<ProgressBar> = None;
 
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .user_agent(USER_AGENT)
+        .build()
+        .context("Failed to build HTTP client")?;
 
     if args.verbose {
         p(format!("Connecting to: {}", url).as_str(), true);
@@ -195,26 +211,53 @@ pub fn extract_from_zip(
         p("\nExtracting zip file…", false);
     }
 
+    let mut extracted = false;
+    let mut sample_names: Vec<String> = Vec::new();
     for i in 0..archive.len() {
-        match archive.by_index(i) {
-            Ok(mut file) => {
-                if file.name().ends_with(ext) {
-                    copy_capped(&mut file, xml_file.as_file_mut(), MAX_DECOMPRESSED_BYTES)
-                        .context(format!("Failed to extract {} file", ext))?;
-                    break;
-                }
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Could not extract file index {} in the downloaded zip file: {}",
-                    i,
-                    e
-                ));
-            }
+        let mut entry = archive.by_index(i).map_err(|e| {
+            anyhow::anyhow!(
+                "Could not read file index {} in the downloaded zip file: {}",
+                i,
+                e
+            )
+        })?;
+        let name = entry.name().to_string();
+        if name.ends_with(ext) {
+            copy_capped(&mut entry, xml_file.as_file_mut(), MAX_DECOMPRESSED_BYTES)
+                .context(format!("Failed to extract {} file", ext))?;
+            extracted = true;
+            break;
+        }
+        if sample_names.len() < 5 {
+            sample_names.push(name);
         }
     }
 
+    if !extracted {
+        return Err(anyhow::anyhow!(
+            "Zip archive contained no entry ending in '{}' (saw: {})",
+            ext,
+            sample_names.join(", ")
+        ));
+    }
+
     Ok(())
+}
+
+/// Escapes the SQL `LIKE` metacharacters `%`, `_`, and `\` with a leading `\`,
+/// so that a STIG/CCI/CWE ID containing a literal underscore can be used as a
+/// `LIKE` pattern without the underscore being treated as a single-character
+/// wildcard. Pair with `LIKE ? ESCAPE '\'` (or `'\\'`) on the SQL side.
+#[must_use]
+pub fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c == '\\' || c == '%' || c == '_' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 pub fn p(s: &str, newline: bool) {

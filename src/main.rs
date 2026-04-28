@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
     display_database_summary(&conn)?;
 
     println!(
-        "\nCWE database build completed successfully: {}",
+        "\nSTITCH database build completed successfully: {}",
         args.output
     );
     Ok(())

@@ -314,7 +314,7 @@ pub async fn process_stig(conn: &Connection, args: &Args) -> Result<()> {
     let mut stig_temp_zip = NamedTempFile::new()?;
     let mut stig_temp_xml = NamedTempFile::new()?;
     download_file(
-        "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_ASD_V6R4_STIG.zip",
+        &args.stig_url,
         &mut stig_temp_zip,
         false,
         "Downloading STIG XML file from DISA…".to_string(),
@@ -355,17 +355,34 @@ async fn stig_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection
     let mut on: u32 = 0;
     bar.set_message(format!("{}/{}", on, total_rules));
 
-    //create the new STIG
+    //create the new STIG. The benchmark's reference identifier (SRG ID) is
+    //pulled from the first rule that has one — the Benchmark element itself
+    //doesn't carry it, and a leading group can be empty in some SRGs.
+    let identifier = benchmark
+        .groups
+        .iter()
+        .flat_map(|g| g.rules.iter())
+        .map(|r| r.reference.identifier.clone())
+        .find(|id| !id.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("STIG benchmark contained no rule with a reference identifier")
+        })?;
+    let release = benchmark
+        .release_info()
+        .first()
+        .copied()
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("STIG benchmark missing release-info plain-text element"))?;
     conn.execute(
-		"INSERT INTO STIG (title, version, stigId, release, identifier) VALUES (?1, ?2, ?3, ?4, ?5)",
-		params![
-			benchmark.title,
-			benchmark.version,
-			benchmark.id.clone().unwrap_or_default(),
-			benchmark.release_info().first().ok_or_else(|| anyhow::anyhow!("Missing release info"))?,
-			benchmark.groups.first().ok_or_else(|| anyhow::anyhow!("Missing group"))?.rules.first().ok_or_else(|| anyhow::anyhow!("Missing rule"))?.reference.identifier.clone()
-		],
-	)?;
+        "INSERT INTO STIG (title, version, stigId, release, identifier) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            benchmark.title,
+            benchmark.version,
+            benchmark.id.clone().unwrap_or_default(),
+            release,
+            identifier,
+        ],
+    )?;
     let stig_id = conn.last_insert_rowid();
 
     // Now iterate through the groups and rules to insert them

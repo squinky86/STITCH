@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-use crate::common::{Args, download_file, p};
+use crate::common::{Args, download_file, escape_like, p};
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -10,24 +10,6 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use tempfile::NamedTempFile;
 use tokio::fs;
-
-/// Escapes SQL LIKE wildcards (`%`, `_`) and the escape character itself in
-/// `pattern`. The caller must use `ESCAPE '\'` in its LIKE clause for this to
-/// take effect. Defense in depth: prevents any future malformed STIG ID from
-/// turning a single-row update into a wildcard mass-update.
-fn escape_like(pattern: &str) -> String {
-    let mut out = String::with_capacity(pattern.len());
-    for c in pattern.chars() {
-        match c {
-            '\\' | '%' | '_' => {
-                out.push('\\');
-                out.push(c);
-            }
-            _ => out.push(c),
-        }
-    }
-    out
-}
 
 //store data of YAML parsing
 #[derive(Debug, Deserialize)]
@@ -134,11 +116,18 @@ async fn stigwe_parse_and_populate_database(yaml: &NamedTempFile, conn: &Connect
                 };
 
                 conn.execute(
+                    // ORDER BY id ASC makes the LIMIT 1 deterministic across
+                    // SQLite versions and insert orderings — without it, two
+                    // builds of the same data could pick different STIGChecks.
+                    // Note: Weakness.STIGCheckId is N:1 by schema, so additional
+                    // matches are intentionally discarded; this just ensures the
+                    // pick is stable.
                     "UPDATE Weakness
                      SET STIGCheckId = (
                          SELECT id
                          FROM STIGCheck
                          WHERE DISAId LIKE ?1 ESCAPE '\\'
+                         ORDER BY id ASC
                          LIMIT 1
                      )
                      WHERE id = ?2",

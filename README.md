@@ -27,43 +27,79 @@ cargo build --release
 
 ## Usage
 
-### Basic usage
+### Building the database (`stitch`)
+
 ```bash
-# Build database with default settings
+# Build database with default settings (writes to ./stitch.db)
 ./target/release/stitch
 
 # Specify output file
-./target/release/stitch --output my_cwe.db
+./target/release/stitch --output my.db
 
 # Verbose output
 ./target/release/stitch --verbose
 
-# Score a specific CWE
-./target/release/stitch-score CWE-119
+# Override the ASD STIG download URL (e.g., when DISA cuts a new revision)
+./target/release/stitch --stig-url https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_ASD_V6R5_STIG.zip
 ```
 
-### Command-line options
-- `-o, --output <FILE>`: Output database file path (default: cwe_database.db)
-- `-v, --verbose`: Enable verbose output
-- `-h, --help`: Show help information
+#### Options
+- `-o, --output <FILE>`: Output database file path (default: `stitch.db`).
+- `--stig-url <URL>`: Override the ASD STIG zip URL.
+- `-v, --verbose`: Enable verbose output.
+- `-h, --help`: Show help information.
+
+### Scoring (`stitch-score`)
+
+`stitch-score` dispatches on the first positional argument; the prefix selects the operation. Run `stitch-score --help` for the full list.
+
+```bash
+# Score a CVSS vector directly (no database needed)
+./target/release/stitch-score 'CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N'
+
+# Score by CVE
+./target/release/stitch-score CVE-2021-44228
+
+# Score by CWE
+./target/release/stitch-score CWE-89
+
+# Score by STIG rule (full or prefix)
+./target/release/stitch-score SV-222387r960735_rule
+
+# Score every CWE in the database (CSV to stdout)
+./target/release/stitch-score CWES
+
+# Export STIG checks for a comma-separated list of rule IDs as CKLB JSON
+./target/release/stitch-score -s SV-222387r960735_rule,SV-222388r1043182_rule
+
+# Look up RMF control info by CCI(s)
+./target/release/stitch-score -c CCI-000001,CCI-000002
+
+# Look up RMF control info by control number(s)
+./target/release/stitch-score -r AC-1,AU-2
+
+# Verbose mode changes the output format from a single number / CSV row
+# to a step-by-step trace of how the score was constructed.
+./target/release/stitch-score -v CWE-89
+```
 
 ## Example Queries
 
-Once the database is built, you can query it with any SQLite tool:
+Once the database is built, you can query it with any SQLite tool.
 
 ### Find all weaknesses related to SQL Injection
 ```sql
-SELECT e.id, e.name, e.description 
-FROM Weakness e
-WHERE e.name LIKE '%SQL%' OR e.description LIKE '%SQL injection%';
+SELECT id, name, description
+FROM Weakness
+WHERE name LIKE '%SQL%' OR description LIKE '%SQL injection%';
 ```
 
-### Get all child weaknesses of a specific CWE
+### Get all child weaknesses of a specific CWE (View 1000)
 ```sql
-SELECT target.id, target.name, r.nature
-FROM Weakness r
-JOIN WeaknessRelationship target ON r.target_id = target.id
-WHERE r.source_id = '89' AND r.nature = 'ChildOf';
+SELECT child.id, child.name, r.nature
+FROM WeaknessRelationship r
+JOIN Weakness child ON child.id = r.source_id
+WHERE r.target_id = 89 AND r.nature = 'ChildOf' AND r.view_id = 1000;
 ```
 
 ## Dependencies

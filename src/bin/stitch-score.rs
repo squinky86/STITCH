@@ -374,10 +374,10 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
     let conn = Connection::open(db_path)
         .with_context(|| format!("Failed to open database file: {}", db_path))?;
 
-    let ids: Vec<String> = stig_ids
-        .split(',')
-        .map(|s| s.replace("ULE", "ule").replace("R", "r"))
-        .collect();
+    // Lowercase both sides at comparison time. The previous
+    // `replace("ULE", "ule").replace("R", "r")` normalization was a footgun:
+    // any stray uppercase `R` in the ID body got silently lower-cased too.
+    let ids: Vec<String> = stig_ids.split(',').map(str::to_ascii_lowercase).collect();
 
     let mut stmt_stig =
         conn.prepare("SELECT id, title, version, stigId, release, identifier FROM STIG")?;
@@ -483,7 +483,8 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
                 .filter_map(std::result::Result::ok)
                 .collect();
 
-            let (status, finding_details) = if ids.iter().any(|id| stigcheck.disa_id.starts_with(id)) {
+            let disa_id_lc = stigcheck.disa_id.to_ascii_lowercase();
+            let (status, finding_details) = if ids.iter().any(|id| disa_id_lc.starts_with(id)) {
                 ("open".to_string(), "|organization| identified findings against this check.".to_string())
             } else {
                 ("not_reviewed".to_string(), String::new())
@@ -1096,7 +1097,10 @@ fn score_from_stig(stig_id: &str, db_path: &str, args: &Args) -> Result<()> {
     let conn = Connection::open(db_path)
         .with_context(|| format!("Failed to open database file: {}", db_path))?;
 
-    let stig_id_query = stig_id.replace("ULE", "ule").replace("R", "r");
+    // Use case-insensitive LIKE with the prefix escaped, so a literal `_` in
+    // the rule ID is matched as `_` not as a single-char wildcard, and the
+    // user can type the ID in either case.
+    let stig_id_pattern = stitch::common::escape_like(stig_id);
 
     let stig_data: Vec<CWEDetails> = {
         let mut stmt_stig = conn.prepare(
@@ -1117,10 +1121,10 @@ fn score_from_stig(stig_id: &str, db_path: &str, args: &Args) -> Result<()> {
 		JOIN MapSTIGCheckCCI ON STIGCheck.id = MapSTIGCheckCCI.STIGCheckId
 		JOIN RMFCCI ON MapSTIGCheckCCI.CCIId = RMFCCI.id
 		JOIN RMFControl ON RMFCCI.RMFControlId = RMFControl.id
-        WHERE STIGCheck.DISAId LIKE (?1 || '%')",
+        WHERE STIGCheck.DISAId LIKE (?1 || '%') ESCAPE '\\' COLLATE NOCASE",
         )?;
 
-        let stig_data_elements = stmt_stig.query_map(params![stig_id_query], |row| {
+        let stig_data_elements = stmt_stig.query_map(params![stig_id_pattern], |row| {
             Ok(CWEDetails {
                 id: row.get::<_, u32>(0)?,               //id
                 name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),      //name
