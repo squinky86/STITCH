@@ -8,7 +8,7 @@ The current scoring process is documented in [doc/scoring.md](doc/scoring.md).
 
 ## Acknowledgements
 
-This software was developed, in whole or in part, under U.S. Government Contract No. ending in 24-F-B013 with the U.S. Army, DEVCOM AvMC. For the full contract number, please contact the author(s) of this software.
+This software was developed, in whole or in part, under U.S. Government Contract No. ending in 24-F-B013 with the U.S. Army Combat Capabilities Development Command Aviation & Missile Center. For the full contract number, please contact the author(s) of this software.
 
 Any opinions, findings, and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the U.S. Army or the Department of Defense.
 

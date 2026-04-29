@@ -17,7 +17,7 @@ This documentation and process are licensed under the **Creative Commons Attribu
 
 To view a copy of this license, visit: <[https://creativecommons.org/licenses/by/4.0/](https://creativecommons.org/licenses/by/4.0/)>.
 
-This process was developed, in whole or in part, under U.S. Government Contract No. ending in 24-F-B013 with the U.S. Army, DEVCOM AvMC. For the full contract number, please contact the author(s) of this process.
+This process was developed, in whole or in part, under U.S. Government Contract No. ending in 24-F-B013 with the U.S. Army Combat Capabilities Development Command Aviation & Missile Center. For the full contract number, please contact the author(s) of this process.
 
 Any opinions, findings, and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the U.S. Army or the Department of Defense.
 
