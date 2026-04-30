@@ -7,7 +7,7 @@ use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use tempfile::NamedTempFile;
 use tokio::time::{Duration, sleep};
 use zip::ZipArchive;
@@ -88,10 +88,18 @@ pub async fn download_file(
     }
 
     let mut retries = 0;
-    let response = loop {
-        let response = client.get(url).send().await;
+    loop {
+        // Reset the temp file before each attempt so partial writes don't accumulate.
+        if retries > 0 {
+            file.as_file_mut()
+                .set_len(0)
+                .context("Failed to truncate temp file for retry")?;
+            file.as_file_mut()
+                .seek(SeekFrom::Start(0))
+                .context("Failed to seek temp file for retry")?;
+        }
 
-        match response {
+        let response = match client.get(url).send().await {
             Ok(res) => {
                 let status = res.status();
                 // Retry transient failures (5xx, 408, 429); fail fast on other 4xx
@@ -116,7 +124,7 @@ pub async fn download_file(
                         "Failed to download {url}: HTTP status {status}"
                     ));
                 }
-                break res;
+                res
             }
             Err(e) => {
                 retries += 1;
@@ -135,57 +143,85 @@ pub async fn download_file(
                     "Failed to download {url}: Max retries exceeded. Last error: {e}"
                 ));
             }
+        };
+
+        let total_size = response.content_length().unwrap_or(0);
+        if args.verbose && total_size > 0 {
+            p(format!("File size: {total_size} bytes").as_str(), true);
         }
-    };
 
-    let total_size = response.content_length().unwrap_or(0);
-    if args.verbose && total_size > 0 {
-        p(format!("File size: {total_size} bytes").as_str(), true);
-    }
+        if !silent {
+            let pb = ProgressBar::new(total_size);
+            pb.set_style(
+                #[allow(clippy::literal_string_with_formatting_args)]
+                ProgressStyle::default_bar()
+                    .template("{prefix} {bar:20.cyan/blue} {msg}")
+                    .expect("Failed to create progress style"),
+            );
+            pb.set_prefix(prefix.clone());
+            progress_bar = Some(pb);
+        }
 
-    if !silent {
-        let pb = ProgressBar::new(total_size);
-        pb.set_style(
-            #[allow(clippy::literal_string_with_formatting_args)]
-            ProgressStyle::default_bar()
-                .template("{prefix} {bar:20.cyan/blue} {msg}")
-                .expect("Failed to create progress style"),
-        );
+        let mut stream = response.bytes_stream();
+        let mut downloaded: u64 = 0;
+        let mut chunk_err: Option<anyhow::Error> = None;
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(bytes) => {
+                    downloaded = downloaded.saturating_add(bytes.len() as u64);
+                    if downloaded > MAX_DOWNLOAD_BYTES {
+                        return Err(anyhow::anyhow!(
+                            "Refusing to download more than {MAX_DOWNLOAD_BYTES} bytes from {url}"
+                        ));
+                    }
+                    file.as_file_mut()
+                        .write_all(&bytes)
+                        .context("Failed to write chunk to file")?;
+                    if !silent && let Some(pb) = &progress_bar {
+                        pb.inc(bytes.len() as u64);
+                        pb.set_message(format!("{}/{}B", pb.position(), &total_size));
+                    }
+                }
+                Err(e) => {
+                    chunk_err = Some(anyhow::anyhow!(e));
+                    break;
+                }
+            }
+        }
 
-        pb.set_prefix(prefix);
-
-        progress_bar = Some(pb);
-    }
-
-    let mut stream = response.bytes_stream();
-    let mut downloaded: u64 = 0;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("Failed to read chunk")?;
-        downloaded = downloaded.saturating_add(chunk.len() as u64);
-        if downloaded > MAX_DOWNLOAD_BYTES {
+        if let Some(e) = chunk_err {
+            if !silent && let Some(pb) = &progress_bar {
+                pb.abandon();
+            }
+            progress_bar = None;
+            retries += 1;
+            if retries < MAX_RETRIES {
+                p(
+                    format!(
+                        "Download interrupted: {e} (retry {retries}/{MAX_RETRIES}), retrying in 5 seconds..."
+                    )
+                    .as_str(),
+                    true,
+                );
+                sleep(Duration::from_secs(5)).await;
+                continue;
+            }
             return Err(anyhow::anyhow!(
-                "Refusing to download more than {MAX_DOWNLOAD_BYTES} bytes from {url}"
+                "Failed to download {url}: Max retries exceeded. Last error: {e}"
             ));
         }
-        file.as_file_mut()
-            .write_all(&chunk)
-            .context("Failed to write chunk to file")?;
+
         if !silent && let Some(pb) = &progress_bar {
-            pb.inc(chunk.len() as u64);
-            pb.set_message(format!("{}/{}B", pb.position(), &total_size));
+            pb.finish_with_message(format!("✓ {}B", pb.position()));
+            println!();
         }
+
+        file.as_file_mut()
+            .sync_all()
+            .context("Failed to sync file to disk")?;
+
+        return Ok(());
     }
-
-    if !silent && let Some(pb) = &progress_bar {
-        pb.finish_with_message(format!("✓ {}B", pb.position()));
-        println!();
-    }
-
-    file.as_file_mut()
-        .sync_all()
-        .context("Failed to sync file to disk")?;
-
-    Ok(())
 }
 
 pub fn extract_from_zip(
