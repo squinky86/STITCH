@@ -164,10 +164,8 @@ pub fn parse_cwe_xml(
                     _ => {}
                 }
             }
-            Ok(Event::Text(e)) => {
-                if capture_text {
-                    text_buffer.push_str(&e.decode().unwrap_or_default());
-                }
+            Ok(Event::Text(e)) if capture_text => {
+                text_buffer.push_str(&e.decode().unwrap_or_default());
             }
             Ok(Event::End(ref e)) => {
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();

@@ -165,10 +165,8 @@ async fn cci_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
                     _ => {}
                 }
             }
-            Ok(Event::Text(e)) => {
-                if capture_text {
-                    text_buffer.push_str(&e.decode().unwrap_or_default());
-                }
+            Ok(Event::Text(e)) if capture_text => {
+                text_buffer.push_str(&e.decode().unwrap_or_default());
             }
             Ok(Event::End(ref e)) => {
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
