@@ -220,6 +220,7 @@ pub struct ParsedDescription {
 
 impl Benchmark {
     /// Get release info
+    #[must_use]
     pub fn release_info(&self) -> Vec<&str> {
         self.plain_texts
             .iter()
@@ -231,6 +232,7 @@ impl Benchmark {
 
 impl Rule {
     /// Parse the embedded XML-like tags in the description field
+    #[must_use]
     pub fn parse_description(&self) -> ParsedDescription {
         let desc = &self.description;
 
@@ -251,6 +253,7 @@ impl Rule {
     }
 
     /// Get the severity category (CAT I, II, or III)
+    #[must_use]
     pub fn severity_category(&self) -> &str {
         match self.severity.as_str() {
             "high" => "CAT I",
@@ -261,6 +264,7 @@ impl Rule {
     }
 
     /// Get CCI identifiers
+    #[must_use]
     pub fn cci_idents(&self) -> Vec<&str> {
         self.idents
             .iter()
@@ -272,6 +276,7 @@ impl Rule {
     }
 
     /// Get legacy identifier
+    #[must_use]
     pub fn legacy_ids(&self) -> Vec<&str> {
         self.idents
             .iter()
@@ -283,8 +288,8 @@ impl Rule {
 
 /// Extract content between XML-like tags in a string
 fn extract_tag_content(text: &str, tag: &str) -> Option<String> {
-    let start_tag = format!("<{}>", tag);
-    let end_tag = format!("</{}>", tag);
+    let start_tag = format!("<{tag}>");
+    let end_tag = format!("</{tag}>");
 
     if let Some(start_pos) = text.find(&start_tag) {
         let content_start = start_pos + start_tag.len();
@@ -353,7 +358,7 @@ async fn stig_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection
         .sum();
     bar.set_length(total_rules);
     let mut on: u32 = 0;
-    bar.set_message(format!("{}/{}", on, total_rules));
+    bar.set_message(format!("{on}/{total_rules}"));
 
     //create the new STIG. The benchmark's reference identifier (SRG ID) is
     //pulled from the first rule that has one — the Benchmark element itself
@@ -394,7 +399,7 @@ async fn stig_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection
                 .ok_or_else(|| anyhow::anyhow!("Missing check for rule {}", rule.id))?;
             let desc = rule.parse_description();
             on += 1;
-            bar.set_message(format!("{}/{}", on, total_rules));
+            bar.set_message(format!("{on}/{total_rules}"));
             bar.inc(1);
             conn.execute(
                 "INSERT INTO STIGCheck (
@@ -423,7 +428,7 @@ async fn stig_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection
                     desc.false_positives,
                     rule.fixtext
                         .as_ref()
-                        .map_or_else(|| "".to_string(), |f| f.value.clone()),
+                        .map_or_else(String::new, |f| f.value.clone()),
                     desc.ia_controls,
                     desc.mitigation_control,
                     desc.mitigations,
@@ -457,6 +462,115 @@ async fn stig_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection
         }
     }
 
-    bar.finish_with_message(format!("✓ ({})", total_rules));
+    bar.finish_with_message(format!("✓ ({total_rules})"));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_rule(description: &str, idents: Vec<Ident>) -> Rule {
+        Rule {
+            id: "SV-1r1_rule".to_string(),
+            severity: "medium".to_string(),
+            weight: 10.0,
+            version: "v1".to_string(),
+            title: "t".to_string(),
+            description: description.to_string(),
+            idents,
+            check: None,
+            fixtext: None,
+            fix: None,
+            reference: Reference {
+                title: String::new(),
+                publisher: String::new(),
+                type_: String::new(),
+                subject: String::new(),
+                identifier: String::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn extract_tag_content_present() {
+        let s = "<VulnDiscussion>hello world</VulnDiscussion>";
+        assert_eq!(
+            super::extract_tag_content(s, "VulnDiscussion"),
+            Some("hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_tag_content_missing() {
+        assert_eq!(
+            super::extract_tag_content("no tags here", "VulnDiscussion"),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_tag_content_empty_tag_yields_none() {
+        // Whitespace-only content is treated as empty.
+        assert_eq!(super::extract_tag_content("<X>   </X>", "X"), None);
+        assert_eq!(super::extract_tag_content("<X></X>", "X"), None);
+    }
+
+    #[test]
+    fn parse_description_extracts_each_field() {
+        let desc = "<VulnDiscussion>vd-text</VulnDiscussion>\
+                    <FalsePositives>fp-text</FalsePositives>\
+                    <Mitigations>mit-text</Mitigations>";
+        let rule = make_rule(desc, vec![]);
+        let parsed = rule.parse_description();
+        assert_eq!(parsed.vuln_discussion.as_deref(), Some("vd-text"));
+        assert_eq!(parsed.false_positives.as_deref(), Some("fp-text"));
+        assert_eq!(parsed.mitigations.as_deref(), Some("mit-text"));
+        assert!(parsed.false_negatives.is_none());
+        assert!(parsed.responsibility.is_none());
+    }
+
+    #[test]
+    fn cci_idents_filters_by_recognized_systems() {
+        let rule = make_rule(
+            "",
+            vec![
+                Ident {
+                    system: "http://iase.disa.mil/cci".to_string(),
+                    value: "CCI-000001".to_string(),
+                },
+                Ident {
+                    system: "http://cyber.mil/cci".to_string(),
+                    value: "CCI-000002".to_string(),
+                },
+                Ident {
+                    system: "http://cyber.mil/legacy".to_string(),
+                    value: "V-1234".to_string(),
+                },
+            ],
+        );
+        assert_eq!(rule.cci_idents(), vec!["CCI-000001", "CCI-000002"]);
+    }
+
+    #[test]
+    fn legacy_ids_filters_by_legacy_system() {
+        let rule = make_rule(
+            "",
+            vec![
+                Ident {
+                    system: "http://iase.disa.mil/cci".to_string(),
+                    value: "CCI-000001".to_string(),
+                },
+                Ident {
+                    system: "http://cyber.mil/legacy".to_string(),
+                    value: "V-1234".to_string(),
+                },
+                Ident {
+                    system: "http://cyber.mil/legacy".to_string(),
+                    value: "SV-5678".to_string(),
+                },
+            ],
+        );
+        assert_eq!(rule.legacy_ids(), vec!["V-1234", "SV-5678"]);
+    }
 }

@@ -11,26 +11,27 @@ use rusqlite::{Connection, params};
 use tempfile::NamedTempFile;
 use tokio::fs;
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default)]
-struct Weakness {
-    id: u32,
-    name: String,
-    abstraction: String,
-    description: String,
-    category: bool, // is a category?
-    view: bool,     // is a view?
-    extended_description: String,
-    confidentiality: bool,
-    integrity: bool,
-    availability: bool,
+pub struct Weakness {
+    pub id: u32,
+    pub name: String,
+    pub abstraction: String,
+    pub description: String,
+    pub category: bool, // is a category?
+    pub view: bool,     // is a view?
+    pub extended_description: String,
+    pub confidentiality: bool,
+    pub integrity: bool,
+    pub availability: bool,
 }
 
 #[derive(Debug, Clone)]
-struct WeaknessRelationship {
-    source_id: u32,
-    target_id: u32,
-    nature: String,
-    view_id: u32,
+pub struct WeaknessRelationship {
+    pub source_id: u32,
+    pub target_id: u32,
+    pub nature: String,
+    pub view_id: u32,
 }
 
 pub async fn process_cwe(conn: &Connection, args: &Args) -> Result<()> {
@@ -65,7 +66,20 @@ async fn cwe_parse_and_populate_database(
         .await
         .context("Failed to read XML file")?;
 
-    let mut reader = Reader::from_str(&xml_content);
+    let (cwe_entries, relationships) = parse_cwe_xml(&xml_content, args.verbose)?;
+    cwe_insert_data_to_database(conn, &cwe_entries, &relationships)?;
+    Ok(())
+}
+
+/// Parses a CWE XML document string into in-memory `Weakness` and `WeaknessRelationship` rows.
+///
+/// The async DB-loading wrapper calls this after reading the file; tests use
+/// it directly with inline fixture XML.
+pub fn parse_cwe_xml(
+    xml_content: &str,
+    verbose: bool,
+) -> Result<(Vec<Weakness>, Vec<WeaknessRelationship>)> {
+    let mut reader = Reader::from_str(xml_content);
     reader.config_mut().trim_text(true);
 
     let mut buf = Vec::new();
@@ -82,7 +96,7 @@ async fn cwe_parse_and_populate_database(
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+            Ok(Event::Start(ref e) | Event::Empty(ref e)) => {
                 current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
 
                 match current_element.as_str() {
@@ -133,11 +147,11 @@ async fn cwe_parse_and_populate_database(
 
                                 match key.as_ref() {
                                     "CWE_ID" => {
-                                        relationship.target_id = value.parse::<u32>().unwrap_or(0)
+                                        relationship.target_id = value.parse::<u32>().unwrap_or(0);
                                     }
                                     "Nature" => relationship.nature = value.to_string(),
                                     "View_ID" => {
-                                        relationship.view_id = value.parse::<u32>().unwrap_or(0)
+                                        relationship.view_id = value.parse::<u32>().unwrap_or(0);
                                     }
                                     _ => {}
                                 }
@@ -160,7 +174,7 @@ async fn cwe_parse_and_populate_database(
                 match tag_name.as_str() {
                     "Weakness" | "Category" | "View" => {
                         if let Some(mut weakness) = current_weakness.take() {
-                            if args.verbose {
+                            if verbose {
                                 p(format!("Parsed: CWE-{}", weakness.id).as_str(), true);
                             }
                             //If it is a class not mapped to any impact, assume it maps to all impacts.
@@ -198,24 +212,19 @@ async fn cwe_parse_and_populate_database(
                         if let Some(weakness) = current_weakness.as_mut() {
                             match text_buffer.trim() {
                                 "Confidentiality" => weakness.confidentiality = true,
-                                "Integrity" => weakness.integrity = true,
+                                "Integrity" | "Accountability" | "Non-Repudiation" => {
+                                    weakness.integrity = true;
+                                }
                                 "Availability" => weakness.availability = true,
                                 "Access Control" => {
                                     weakness.confidentiality = true;
                                     weakness.integrity = true;
                                 }
-                                "Accountability" => weakness.integrity = true,
-                                "Authentication" => {
+                                "Authentication" | "Authorization" => {
                                     weakness.confidentiality = true;
                                     weakness.integrity = true;
                                     weakness.availability = true;
                                 }
-                                "Authorization" => {
-                                    weakness.confidentiality = true;
-                                    weakness.integrity = true;
-                                    weakness.availability = true;
-                                }
-                                "Non-Repudiation" => weakness.integrity = true,
                                 "Other" => has_other = true,
                                 _ => {}
                             }
@@ -239,15 +248,13 @@ async fn cwe_parse_and_populate_database(
                 current_element.clear();
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(anyhow::anyhow!("XML parsing error: {}", e)),
+            Err(e) => return Err(anyhow::anyhow!("XML parsing error: {e}")),
             _ => {}
         }
         buf.clear();
     }
 
-    cwe_insert_data_to_database(conn, &cwe_entries, &relationships)?;
-
-    Ok(())
+    Ok((cwe_entries, relationships))
 }
 
 fn cwe_insert_data_to_database(
@@ -330,4 +337,117 @@ fn cwe_insert_data_to_database(
     println!();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(xml: &str) -> (Vec<Weakness>, Vec<WeaknessRelationship>) {
+        parse_cwe_xml(xml, false).expect("parse_cwe_xml failed")
+    }
+
+    fn find(entries: &[Weakness], id: u32) -> &Weakness {
+        entries.iter().find(|w| w.id == id).expect("CWE not found")
+    }
+
+    const FIXTURE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Weakness_Catalog>
+  <Weaknesses>
+    <Weakness ID="100" Name="Class no scope" Abstraction="Class">
+      <Description>desc</Description>
+    </Weakness>
+    <Weakness ID="200" Name="Other varies" Abstraction="Base">
+      <Description>desc</Description>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Other</Scope>
+          <Impact>Varies by Context</Impact>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="300" Name="Confidentiality only" Abstraction="Base">
+      <Description>desc</Description>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Confidentiality</Scope>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="400" Name="Authentication scope" Abstraction="Base">
+      <Description>desc</Description>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Authentication</Scope>
+        </Consequence>
+      </Common_Consequences>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="100" View_ID="1000" />
+      </Related_Weaknesses>
+    </Weakness>
+  </Weaknesses>
+  <Views>
+    <View ID="1000" Name="Research view" Abstraction="View">
+      <Description>view</Description>
+    </View>
+  </Views>
+</Weakness_Catalog>"#;
+
+    #[test]
+    fn class_with_no_scope_defaults_to_all_cia() {
+        let (entries, _) = parse(FIXTURE);
+        let w = find(&entries, 100);
+        assert!(w.confidentiality && w.integrity && w.availability);
+    }
+
+    #[test]
+    fn other_scope_with_varies_by_context_sets_all_cia() {
+        let (entries, _) = parse(FIXTURE);
+        let w = find(&entries, 200);
+        assert!(w.confidentiality && w.integrity && w.availability);
+    }
+
+    #[test]
+    fn explicit_confidentiality_scope_only_sets_c() {
+        let (entries, _) = parse(FIXTURE);
+        let w = find(&entries, 300);
+        assert!(w.confidentiality && !w.integrity && !w.availability);
+    }
+
+    #[test]
+    fn authentication_scope_sets_all_cia() {
+        let (entries, _) = parse(FIXTURE);
+        let w = find(&entries, 400);
+        assert!(w.confidentiality && w.integrity && w.availability);
+    }
+
+    #[test]
+    fn related_weakness_emits_relationship_row() {
+        let (_, rels) = parse(FIXTURE);
+        let r = rels
+            .iter()
+            .find(|r| r.source_id == 400)
+            .expect("expected relationship from 400");
+        assert_eq!(r.target_id, 100);
+        assert_eq!(r.nature, "ChildOf");
+        assert_eq!(r.view_id, 1000);
+    }
+
+    #[test]
+    fn parser_output_inserts_into_in_memory_db() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::apply_schema(&conn).unwrap();
+        let (entries, rels) = parse(FIXTURE);
+        cwe_insert_data_to_database(&conn, &entries, &rels).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM Weakness", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 5);
+        let rel_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM WeaknessRelationship", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(rel_count, 1);
+    }
 }

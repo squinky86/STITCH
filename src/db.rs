@@ -17,19 +17,27 @@ pub fn create_database(db_path: &str) -> Result<Connection> {
         Ok(meta) => {
             if meta.file_type().is_symlink() {
                 return Err(anyhow::anyhow!(
-                    "Refusing to write database to symlink path: {}",
-                    db_path
+                    "Refusing to write database to symlink path: {db_path}"
                 ));
             }
             std::fs::remove_file(db_path).context("Failed to delete existing database file")?;
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => {
-            return Err(e).context(format!("Failed to inspect existing database path: {}", db_path));
+            return Err(e).context(format!(
+                "Failed to inspect existing database path: {db_path}"
+            ));
         }
     }
     let conn = Connection::open(db_path).context("Failed to create database")?;
+    apply_schema(&conn)?;
+    p(format!("✓ ({db_path})").as_ref(), true);
+    Ok(conn)
+}
 
+/// Applies the full STITCH schema (tables, FKs, pragmas) to an open Connection.
+/// Used by `create_database` and by tests that want an in-memory DB.
+pub fn apply_schema(conn: &Connection) -> Result<()> {
     // Enable foreign key constraints
     conn.execute("PRAGMA foreign_keys = ON", [])?;
 
@@ -223,9 +231,7 @@ FOREIGN KEY(WeaknessId) REFERENCES Weakness(id)
     )
     .context("Failed to create MapNVDWeakness table")?;
 
-    p(format!("✓ ({})", db_path).as_ref(), true);
-
-    Ok(conn)
+    Ok(())
 }
 
 pub fn display_database_summary(conn: &Connection) -> Result<()> {
@@ -234,12 +240,12 @@ pub fn display_database_summary(conn: &Connection) -> Result<()> {
     // Count entries
     let mut stmt = conn.prepare("SELECT COUNT(*) FROM Weakness")?;
     let mut tmp_count: i64 = stmt.query_row([], |row| row.get(0))?;
-    p(format!("CWE Entries: {}", tmp_count).as_ref(), true);
+    p(format!("CWE Entries: {tmp_count}").as_ref(), true);
 
     // Count relationships
     stmt = conn.prepare("SELECT COUNT(*) FROM WeaknessRelationship")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
-    p(format!("Relationships: {}", tmp_count).as_ref(), true);
+    p(format!("Relationships: {tmp_count}").as_ref(), true);
 
     if tmp_count > 0 {
         p("Relationship Types:", true);
@@ -252,74 +258,71 @@ pub fn display_database_summary(conn: &Connection) -> Result<()> {
         })?;
 
         while let Some(Ok((nature, count))) = rows.next() {
-            p(
-                format!("\t{}: {}", nature, count).to_string().as_ref(),
-                true,
-            );
+            p(format!("\t{nature}: {count}").to_string().as_ref(), true);
         }
     }
 
     // Count RMF Families
     stmt = conn.prepare("SELECT COUNT(*) FROM RMFFamily")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
-    p(format!("RMF Families: {}", tmp_count).as_ref(), true);
+    p(format!("RMF Families: {tmp_count}").as_ref(), true);
 
     // Count RMF Controls
     stmt = conn.prepare("SELECT COUNT(*) FROM RMFControl")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
-    p(format!("RMF Controls: {}", tmp_count).as_ref(), true);
+    p(format!("RMF Controls: {tmp_count}").as_ref(), true);
 
     // Count RMF CCIs
     stmt = conn.prepare("SELECT COUNT(*) FROM RMFCCI")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
-    p(format!("RMF CCIs: {}", tmp_count).as_ref(), true);
+    p(format!("RMF CCIs: {tmp_count}").as_ref(), true);
 
     // Count STIGs
     stmt = conn.prepare("SELECT COUNT(*) FROM STIG")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
-    p(format!("STIGs: {}", tmp_count).as_ref(), true);
+    p(format!("STIGs: {tmp_count}").as_ref(), true);
 
     // Count STIG Checks
     stmt = conn.prepare("SELECT COUNT(*) FROM STIGCheck")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
-    p(format!("STIG Checks: {}", tmp_count).as_ref(), true);
+    p(format!("STIG Checks: {tmp_count}").as_ref(), true);
 
     stmt = conn.prepare("SELECT COUNT(*) FROM Vulnerability")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
-    p(format!("CVEs: {}", tmp_count).as_ref(), true);
+    p(format!("CVEs: {tmp_count}").as_ref(), true);
 
     stmt = conn.prepare("SELECT COUNT(*) FROM Weakness")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
-    p(format!("CWEs: {}", tmp_count).as_ref(), true);
+    p(format!("CWEs: {tmp_count}").as_ref(), true);
 
     stmt = conn.prepare("SELECT COUNT(*) FROM Weakness WHERE view = TRUE")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
-    p(format!("\tViews: {}", tmp_count).as_ref(), true);
+    p(format!("\tViews: {tmp_count}").as_ref(), true);
 
     stmt = conn.prepare("SELECT COUNT(*) FROM Weakness WHERE category = TRUE")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
-    p(format!("\tCategories: {}", tmp_count).as_ref(), true);
+    p(format!("\tCategories: {tmp_count}").as_ref(), true);
 
     stmt = conn.prepare("SELECT COUNT(*) FROM Weakness WHERE view = FALSE AND category = FALSE")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
-    p(format!("\tRegular: {}", tmp_count).as_ref(), true);
+    p(format!("\tRegular: {tmp_count}").as_ref(), true);
 
     // Count STIG Checks
     stmt = conn.prepare("SELECT COUNT(*) FROM MapSTIGCheckCCI")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
     p(
-        format!("STIG Check to CCI Mappings: {}", tmp_count).as_ref(),
+        format!("STIG Check to CCI Mappings: {tmp_count}").as_ref(),
         true,
     );
 
     // Count Mappings
     stmt = conn.prepare("SELECT COUNT(*) FROM STIGCheck WHERE CWEId IS NOT NULL")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
-    p(format!("STIG→CWE Mappings: {}", tmp_count).as_ref(), true);
+    p(format!("STIG→CWE Mappings: {tmp_count}").as_ref(), true);
 
     stmt = conn.prepare("SELECT COUNT(*) FROM Weakness WHERE STIGCheckId IS NOT NULL")?;
     tmp_count = stmt.query_row([], |row| row.get(0))?;
-    p(format!("CWE→STIG Mappings: {}", tmp_count).as_ref(), true);
+    p(format!("CWE→STIG Mappings: {tmp_count}").as_ref(), true);
 
     Ok(())
 }

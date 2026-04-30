@@ -203,6 +203,7 @@ impl Default for CvssDataV40 {
 }
 
 impl CvssDataV40 {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             version: String::new(),
@@ -289,34 +290,143 @@ pub struct Reference {
     pub tags: Option<Vec<String>>,
 }
 
+/// Apply a CVSS v3.x record onto a v4 record using the published mapping
+/// from `doc/scoring.md`. Operates on the inner `CvssDataV3` so it covers
+/// both v3.0 and v3.1 metrics.
+pub fn apply_v3_to_v4(cvss_v4: &mut CvssDataV40, v3: &CvssDataV3) {
+    cvss_v4.attack_vector = if v3.attack_vector == "ADJACENT_NETWORK" {
+        "ADJACENT".to_string()
+    } else {
+        v3.attack_vector.clone()
+    };
+    cvss_v4.attack_complexity.clone_from(&v3.attack_complexity);
+    cvss_v4
+        .privileges_required
+        .clone_from(&v3.privileges_required);
+    cvss_v4.user_interaction = if v3.user_interaction == "REQUIRED" {
+        "ACTIVE".to_string()
+    } else {
+        v3.user_interaction.clone()
+    };
+
+    if v3.scope == "CHANGED" {
+        cvss_v4
+            .sub_confidentiality_impact
+            .clone_from(&v3.confidentiality_impact);
+        cvss_v4
+            .sub_integrity_impact
+            .clone_from(&v3.integrity_impact);
+        cvss_v4
+            .sub_availability_impact
+            .clone_from(&v3.availability_impact);
+    } else {
+        cvss_v4.sub_confidentiality_impact = "NONE".to_string();
+        cvss_v4.sub_integrity_impact = "NONE".to_string();
+        cvss_v4.sub_availability_impact = "NONE".to_string();
+    }
+
+    cvss_v4
+        .vuln_confidentiality_impact
+        .clone_from(&v3.confidentiality_impact);
+    cvss_v4
+        .vuln_integrity_impact
+        .clone_from(&v3.integrity_impact);
+    cvss_v4
+        .vuln_availability_impact
+        .clone_from(&v3.availability_impact);
+}
+
+/// Apply a CVSS v2 record onto a v4 record using the published mapping
+/// from `doc/scoring.md`.
+pub fn apply_v2_to_v4(cvss_v4: &mut CvssDataV40, v2: &CvssMetricV2) {
+    cvss_v4.attack_vector = match v2.cvss_data.access_vector.as_str() {
+        "NETWORK" => "NETWORK".to_string(),
+        "ADJACENT_NETWORK" => "ADJACENT".to_string(),
+        "LOCAL" => "LOCAL".to_string(),
+        _ => "NOT_DEFINED".to_string(),
+    };
+    match v2.cvss_data.access_complexity.as_str() {
+        "LOW" => {
+            cvss_v4.attack_complexity = "LOW".to_string();
+            cvss_v4.attack_requirements = "NONE".to_string();
+        }
+        "MEDIUM" => {
+            cvss_v4.attack_complexity = "LOW".to_string();
+            cvss_v4.attack_requirements = "PRESENT".to_string();
+        }
+        _ => {
+            cvss_v4.attack_complexity = "HIGH".to_string();
+            cvss_v4.attack_requirements = "PRESENT".to_string();
+        }
+    }
+    cvss_v4.privileges_required = match v2.cvss_data.authentication.as_str() {
+        "NONE" => "NONE".to_string(),
+        "SINGLE" => "LOW".to_string(),
+        _ => "HIGH".to_string(),
+    };
+    cvss_v4.vuln_confidentiality_impact = match v2.cvss_data.confidentiality_impact.as_str() {
+        "NONE" => "NONE".to_string(),
+        "PARTIAL" => "LOW".to_string(),
+        _ => "HIGH".to_string(),
+    };
+    cvss_v4.vuln_integrity_impact = match v2.cvss_data.integrity_impact.as_str() {
+        "NONE" => "NONE".to_string(),
+        "PARTIAL" => "LOW".to_string(),
+        _ => "HIGH".to_string(),
+    };
+    cvss_v4.vuln_availability_impact = match v2.cvss_data.availability_impact.as_str() {
+        "NONE" => "NONE".to_string(),
+        "PARTIAL" => "LOW".to_string(),
+        _ => "HIGH".to_string(),
+    };
+    if v2.obtain_all_privilege {
+        cvss_v4.sub_confidentiality_impact = "HIGH".to_string();
+        cvss_v4.sub_integrity_impact = "HIGH".to_string();
+        cvss_v4.sub_availability_impact = "HIGH".to_string();
+    } else if v2.obtain_user_privilege || v2.obtain_other_privilege {
+        cvss_v4.sub_confidentiality_impact = "LOW".to_string();
+        cvss_v4.sub_integrity_impact = "LOW".to_string();
+        cvss_v4.sub_availability_impact = "LOW".to_string();
+    } else {
+        cvss_v4.sub_confidentiality_impact = "NONE".to_string();
+        cvss_v4.sub_integrity_impact = "NONE".to_string();
+        cvss_v4.sub_availability_impact = "NONE".to_string();
+    }
+
+    if let Some(ui_required) = v2.user_interaction_required {
+        cvss_v4.user_interaction = if ui_required {
+            "ACTIVE".to_string()
+        } else {
+            "NONE".to_string()
+        };
+    }
+}
+
 pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
     // NVD Data
     p("Obtaining and parsing NVD data:", true);
     let current_datetime = Utc::now();
     for year in 2002..=current_datetime.year() {
         p(
-            format!("\tProcessing NVD data for year {}:", year)
+            format!("\tProcessing NVD data for year {year}:")
                 .to_string()
                 .as_ref(),
             true,
         );
         let mut nvd_temp_json_gz = NamedTempFile::new()?;
         let mut nvd_temp_json = NamedTempFile::new()?;
-        let nvd_url = format!(
-            "https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-{}.json.gz",
-            year
-        );
+        let nvd_url = format!("https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-{year}.json.gz");
         download_file(
             &nvd_url,
             &mut nvd_temp_json_gz,
             false,
-            format!("\t\tDownloading {} NVD JSON…", year),
+            format!("\t\tDownloading {year} NVD JSON…"),
             args,
         )
         .await?;
 
         p(
-            format!("\t\tDeflating {} NVD JSON…", year)
+            format!("\t\tDeflating {year} NVD JSON…")
                 .to_string()
                 .as_ref(),
             false,
@@ -340,8 +450,9 @@ async fn nvd_parse_and_populate_database(
         .context("Failed to read NVD JSON file")?;
 
     let feed: NvdCveFeed = serde_json::from_str(&json_content)
-        .context(format!("Failed to parse NVD JSON for year {}", year))?;
+        .context(format!("Failed to parse NVD JSON for year {year}"))?;
 
+    #[allow(clippy::cast_sign_loss)]
     let bar = ProgressBar::new(feed.total_results as u64);
     let mut on: u32 = 0;
     bar.set_style(
@@ -349,7 +460,7 @@ async fn nvd_parse_and_populate_database(
             .template("{prefix} {bar:20.cyan/blue} {msg}")
             .expect("Failed to create progress style"),
     );
-    bar.set_prefix(format!("\t\tProcessing {} JSON…", year));
+    bar.set_prefix(format!("\t\tProcessing {year} JSON…"));
     bar.set_message(format!("{}/{}", on, feed.total_results));
     let tx = conn.unchecked_transaction()?;
     {
@@ -460,42 +571,7 @@ async fn nvd_parse_and_populate_database(
                 for cvss_metric in cvss_metrics {
                     if cvss_metric.type_ == "Primary" {
                         score_version = 3;
-                        cvss_v4.attack_vector =
-                            if cvss_metric.cvss_data.attack_vector == "ADJACENT_NETWORK" {
-                                "ADJACENT".to_string()
-                            } else {
-                                cvss_metric.cvss_data.attack_vector.clone()
-                            };
-                        cvss_v4.attack_complexity = cvss_metric.cvss_data.attack_complexity.clone();
-                        cvss_v4.privileges_required =
-                            cvss_metric.cvss_data.privileges_required.clone();
-                        cvss_v4.user_interaction =
-                            if cvss_metric.cvss_data.user_interaction == "REQUIRED" {
-                                "ACTIVE".to_string()
-                            } else {
-                                cvss_metric.cvss_data.user_interaction.clone()
-                            };
-
-                        //The Scope metric reflects on the subsequent system's vulnerability
-                        if cvss_metric.cvss_data.scope == "CHANGED" {
-                            cvss_v4.sub_confidentiality_impact =
-                                cvss_metric.cvss_data.confidentiality_impact.clone();
-                            cvss_v4.sub_integrity_impact =
-                                cvss_metric.cvss_data.integrity_impact.clone();
-                            cvss_v4.sub_availability_impact =
-                                cvss_metric.cvss_data.availability_impact.clone();
-                        } else {
-                            cvss_v4.sub_confidentiality_impact = "NONE".to_string();
-                            cvss_v4.sub_integrity_impact = "NONE".to_string();
-                            cvss_v4.sub_availability_impact = "NONE".to_string();
-                        }
-
-                        cvss_v4.vuln_confidentiality_impact =
-                            cvss_metric.cvss_data.confidentiality_impact.clone();
-                        cvss_v4.vuln_integrity_impact =
-                            cvss_metric.cvss_data.integrity_impact.clone();
-                        cvss_v4.vuln_availability_impact =
-                            cvss_metric.cvss_data.availability_impact.clone();
+                        apply_v3_to_v4(&mut cvss_v4, &cvss_metric.cvss_data);
                         break;
                     }
                 }
@@ -507,42 +583,7 @@ async fn nvd_parse_and_populate_database(
                 for cvss_metric in cvss_metrics {
                     if cvss_metric.type_ == "Primary" {
                         score_version = 3;
-                        cvss_v4.attack_vector =
-                            if cvss_metric.cvss_data.attack_vector == "ADJACENT_NETWORK" {
-                                "ADJACENT".to_string()
-                            } else {
-                                cvss_metric.cvss_data.attack_vector.clone()
-                            };
-                        cvss_v4.attack_complexity = cvss_metric.cvss_data.attack_complexity.clone();
-                        cvss_v4.privileges_required =
-                            cvss_metric.cvss_data.privileges_required.clone();
-                        cvss_v4.user_interaction =
-                            if cvss_metric.cvss_data.user_interaction == "REQUIRED" {
-                                "ACTIVE".to_string()
-                            } else {
-                                cvss_metric.cvss_data.user_interaction.clone()
-                            };
-
-                        //The Scope metric reflects on the subsequent system's vulnerability
-                        if cvss_metric.cvss_data.scope == "CHANGED" {
-                            cvss_v4.sub_confidentiality_impact =
-                                cvss_metric.cvss_data.confidentiality_impact.clone();
-                            cvss_v4.sub_integrity_impact =
-                                cvss_metric.cvss_data.integrity_impact.clone();
-                            cvss_v4.sub_availability_impact =
-                                cvss_metric.cvss_data.availability_impact.clone();
-                        } else {
-                            cvss_v4.sub_confidentiality_impact = "NONE".to_string();
-                            cvss_v4.sub_integrity_impact = "NONE".to_string();
-                            cvss_v4.sub_availability_impact = "NONE".to_string();
-                        }
-
-                        cvss_v4.vuln_confidentiality_impact =
-                            cvss_metric.cvss_data.confidentiality_impact.clone();
-                        cvss_v4.vuln_integrity_impact =
-                            cvss_metric.cvss_data.integrity_impact.clone();
-                        cvss_v4.vuln_availability_impact =
-                            cvss_metric.cvss_data.availability_impact.clone();
+                        apply_v3_to_v4(&mut cvss_v4, &cvss_metric.cvss_data);
                         break;
                     }
                 }
@@ -555,73 +596,7 @@ async fn nvd_parse_and_populate_database(
                 for cvss_metric in cvss_metrics {
                     if cvss_metric.type_ == "Primary" {
                         score_version = 2;
-                        cvss_v4.attack_vector = match cvss_metric.cvss_data.access_vector.as_str() {
-                            "NETWORK" => "NETWORK".to_string(),
-                            "ADJACENT_NETWORK" => "ADJACENT".to_string(),
-                            "LOCAL" => "LOCAL".to_string(),
-                            _ => "NOT_DEFINED".to_string(),
-                        };
-                        match cvss_metric.cvss_data.access_complexity.as_str() {
-                            "LOW" => {
-                                cvss_v4.attack_complexity = "LOW".to_string();
-                                cvss_v4.attack_requirements = "NONE".to_string();
-                            }
-                            "MEDIUM" => {
-                                cvss_v4.attack_complexity = "LOW".to_string();
-                                cvss_v4.attack_requirements = "PRESENT".to_string();
-                            }
-                            _ => {
-                                cvss_v4.attack_complexity = "HIGH".to_string();
-                                cvss_v4.attack_requirements = "PRESENT".to_string();
-                            }
-                        };
-                        cvss_v4.privileges_required =
-                            match cvss_metric.cvss_data.authentication.as_str() {
-                                "NONE" => "NONE".to_string(),
-                                "SINGLE" => "LOW".to_string(),
-                                _ => "HIGH".to_string(),
-                            };
-                        cvss_v4.vuln_confidentiality_impact =
-                            match cvss_metric.cvss_data.confidentiality_impact.as_str() {
-                                "NONE" => "NONE".to_string(),
-                                "PARTIAL" => "LOW".to_string(),
-                                _ => "HIGH".to_string(),
-                            };
-                        cvss_v4.vuln_integrity_impact =
-                            match cvss_metric.cvss_data.integrity_impact.as_str() {
-                                "NONE" => "NONE".to_string(),
-                                "PARTIAL" => "LOW".to_string(),
-                                _ => "HIGH".to_string(),
-                            };
-                        cvss_v4.vuln_availability_impact =
-                            match cvss_metric.cvss_data.availability_impact.as_str() {
-                                "NONE" => "NONE".to_string(),
-                                "PARTIAL" => "LOW".to_string(),
-                                _ => "HIGH".to_string(),
-                            };
-                        if cvss_metric.obtain_all_privilege {
-                            cvss_v4.sub_confidentiality_impact = "HIGH".to_string();
-                            cvss_v4.sub_integrity_impact = "HIGH".to_string();
-                            cvss_v4.sub_availability_impact = "HIGH".to_string();
-                        } else if cvss_metric.obtain_user_privilege
-                            || cvss_metric.obtain_other_privilege
-                        {
-                            cvss_v4.sub_confidentiality_impact = "LOW".to_string();
-                            cvss_v4.sub_integrity_impact = "LOW".to_string();
-                            cvss_v4.sub_availability_impact = "LOW".to_string();
-                        } else {
-                            cvss_v4.sub_confidentiality_impact = "NONE".to_string();
-                            cvss_v4.sub_integrity_impact = "NONE".to_string();
-                            cvss_v4.sub_availability_impact = "NONE".to_string();
-                        }
-
-                        if let Some(ui_required) = cvss_metric.user_interaction_required {
-                            cvss_v4.user_interaction = if ui_required {
-                                "ACTIVE".to_string()
-                            } else {
-                                "NONE".to_string()
-                            };
-                        }
+                        apply_v2_to_v4(&mut cvss_v4, cvss_metric);
                         break;
                     }
                 }
@@ -675,19 +650,22 @@ async fn nvd_parse_and_populate_database(
             if let Some(weaknesses) = &cve.weaknesses {
                 for weakness in weaknesses {
                     for description in weakness
-                            .description
-                            .iter()
-                            .filter(|d| d.lang == "en" && d.value.starts_with("CWE-"))
+                        .description
+                        .iter()
+                        .filter(|d| d.lang == "en" && d.value.starts_with("CWE-"))
+                    {
+                        if let Ok(tmp_weakness) =
+                            description.value.trim_start_matches("CWE-").parse::<i32>()
+                            && !inserted.contains(&tmp_weakness)
                         {
-                            if let Ok(tmp_weakness) =
-                                description.value.trim_start_matches("CWE-").parse::<i32>()
-                                && !inserted.contains(&tmp_weakness)
-                            {
-                                stmt2.execute(params![vuln_id, tmp_weakness, weakness.type_ == "Primary"])?;
-                                inserted.push(tmp_weakness);
-                            }
+                            stmt2.execute(params![
+                                vuln_id,
+                                tmp_weakness,
+                                weakness.type_ == "Primary"
+                            ])?;
+                            inserted.push(tmp_weakness);
                         }
-                    
+                    }
                 }
             }
 
@@ -700,4 +678,216 @@ async fn nvd_parse_and_populate_database(
     println!();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v3(scope: &str, av: &str, ui: &str) -> CvssDataV3 {
+        CvssDataV3 {
+            version: "3.1".into(),
+            vector_string: String::new(),
+            attack_vector: av.into(),
+            attack_complexity: "LOW".into(),
+            privileges_required: "NONE".into(),
+            user_interaction: ui.into(),
+            scope: scope.into(),
+            confidentiality_impact: "HIGH".into(),
+            integrity_impact: "LOW".into(),
+            availability_impact: "NONE".into(),
+            base_score: 0.0,
+            base_severity: String::new(),
+        }
+    }
+
+    #[test]
+    fn v3_to_v4_unchanged_scope_clears_subsequent_impacts() {
+        let mut out = CvssDataV40::new();
+        apply_v3_to_v4(&mut out, &v3("UNCHANGED", "NETWORK", "NONE"));
+        assert_eq!(out.attack_vector, "NETWORK");
+        assert_eq!(out.vuln_confidentiality_impact, "HIGH");
+        assert_eq!(out.vuln_integrity_impact, "LOW");
+        assert_eq!(out.vuln_availability_impact, "NONE");
+        // Scope=UNCHANGED → subsequent system impacts go to NONE
+        assert_eq!(out.sub_confidentiality_impact, "NONE");
+        assert_eq!(out.sub_integrity_impact, "NONE");
+        assert_eq!(out.sub_availability_impact, "NONE");
+        // Default user_interaction passes through.
+        assert_eq!(out.user_interaction, "NONE");
+    }
+
+    #[test]
+    fn v3_to_v4_changed_scope_propagates_to_subsequent_impacts() {
+        let mut out = CvssDataV40::new();
+        apply_v3_to_v4(&mut out, &v3("CHANGED", "NETWORK", "NONE"));
+        assert_eq!(out.sub_confidentiality_impact, "HIGH");
+        assert_eq!(out.sub_integrity_impact, "LOW");
+        assert_eq!(out.sub_availability_impact, "NONE");
+    }
+
+    #[test]
+    fn v3_to_v4_adjacent_network_renamed_to_adjacent() {
+        let mut out = CvssDataV40::new();
+        apply_v3_to_v4(&mut out, &v3("UNCHANGED", "ADJACENT_NETWORK", "NONE"));
+        assert_eq!(out.attack_vector, "ADJACENT");
+    }
+
+    #[test]
+    fn v3_to_v4_required_user_interaction_becomes_active() {
+        let mut out = CvssDataV40::new();
+        apply_v3_to_v4(&mut out, &v3("UNCHANGED", "NETWORK", "REQUIRED"));
+        assert_eq!(out.user_interaction, "ACTIVE");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn v2(
+        av: &str,
+        ac: &str,
+        au: &str,
+        c: &str,
+        i: &str,
+        a: &str,
+        all: bool,
+        user: bool,
+        other: bool,
+        ui: Option<bool>,
+    ) -> CvssMetricV2 {
+        CvssMetricV2 {
+            source: String::new(),
+            type_: "Primary".into(),
+            cvss_data: CvssData {
+                version: "2.0".into(),
+                vector_string: String::new(),
+                access_vector: av.into(),
+                access_complexity: ac.into(),
+                authentication: au.into(),
+                confidentiality_impact: c.into(),
+                integrity_impact: i.into(),
+                availability_impact: a.into(),
+                base_score: 0.0,
+            },
+            base_severity: String::new(),
+            exploitability_score: 0.0,
+            impact_score: 0.0,
+            ac_insuf_info: None,
+            obtain_all_privilege: all,
+            obtain_user_privilege: user,
+            obtain_other_privilege: other,
+            user_interaction_required: ui,
+        }
+    }
+
+    #[test]
+    fn v2_to_v4_low_complexity_no_auth_no_ui_required() {
+        let mut out = CvssDataV40::new();
+        apply_v2_to_v4(
+            &mut out,
+            &v2(
+                "NETWORK",
+                "LOW",
+                "NONE",
+                "PARTIAL",
+                "PARTIAL",
+                "NONE",
+                false,
+                false,
+                false,
+                Some(false),
+            ),
+        );
+        assert_eq!(out.attack_vector, "NETWORK");
+        assert_eq!(out.attack_complexity, "LOW");
+        assert_eq!(out.attack_requirements, "NONE");
+        assert_eq!(out.privileges_required, "NONE");
+        assert_eq!(out.vuln_confidentiality_impact, "LOW");
+        assert_eq!(out.vuln_integrity_impact, "LOW");
+        assert_eq!(out.vuln_availability_impact, "NONE");
+        assert_eq!(out.sub_confidentiality_impact, "NONE");
+        assert_eq!(out.user_interaction, "NONE");
+    }
+
+    #[test]
+    fn v2_to_v4_medium_complexity_promotes_attack_requirements() {
+        let mut out = CvssDataV40::new();
+        apply_v2_to_v4(
+            &mut out,
+            &v2(
+                "LOCAL", "MEDIUM", "SINGLE", "COMPLETE", "COMPLETE", "COMPLETE", false, false,
+                false, None,
+            ),
+        );
+        assert_eq!(out.attack_complexity, "LOW");
+        assert_eq!(out.attack_requirements, "PRESENT");
+        assert_eq!(out.privileges_required, "LOW");
+        assert_eq!(out.vuln_confidentiality_impact, "HIGH");
+    }
+
+    #[test]
+    fn v2_to_v4_obtain_all_privilege_sets_subsequent_high() {
+        let mut out = CvssDataV40::new();
+        apply_v2_to_v4(
+            &mut out,
+            &v2(
+                "NETWORK", "LOW", "NONE", "NONE", "NONE", "NONE", true, false, false, None,
+            ),
+        );
+        assert_eq!(out.sub_confidentiality_impact, "HIGH");
+        assert_eq!(out.sub_integrity_impact, "HIGH");
+        assert_eq!(out.sub_availability_impact, "HIGH");
+    }
+
+    #[test]
+    fn v2_to_v4_obtain_user_or_other_sets_subsequent_low() {
+        let mut out = CvssDataV40::new();
+        apply_v2_to_v4(
+            &mut out,
+            &v2(
+                "NETWORK", "LOW", "NONE", "NONE", "NONE", "NONE", false, true, false, None,
+            ),
+        );
+        assert_eq!(out.sub_confidentiality_impact, "LOW");
+    }
+
+    #[test]
+    fn v2_to_v4_adjacent_network_renamed() {
+        let mut out = CvssDataV40::new();
+        apply_v2_to_v4(
+            &mut out,
+            &v2(
+                "ADJACENT_NETWORK",
+                "LOW",
+                "NONE",
+                "NONE",
+                "NONE",
+                "NONE",
+                false,
+                false,
+                false,
+                None,
+            ),
+        );
+        assert_eq!(out.attack_vector, "ADJACENT");
+    }
+
+    #[test]
+    fn v2_to_v4_user_interaction_required_true_becomes_active() {
+        let mut out = CvssDataV40::new();
+        apply_v2_to_v4(
+            &mut out,
+            &v2(
+                "NETWORK",
+                "LOW",
+                "NONE",
+                "NONE",
+                "NONE",
+                "NONE",
+                false,
+                false,
+                false,
+                Some(true),
+            ),
+        );
+        assert_eq!(out.user_interaction, "ACTIVE");
+    }
 }

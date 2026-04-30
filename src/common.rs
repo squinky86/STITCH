@@ -38,8 +38,7 @@ fn copy_capped<R: Read, W: Write>(reader: &mut R, writer: &mut W, limit: u64) ->
     let written = std::io::copy(&mut capped, writer).context("Failed during bounded copy")?;
     if written > limit {
         return Err(anyhow::anyhow!(
-            "Refusing to write more than {} bytes (decompression bomb?)",
-            limit
+            "Refusing to write more than {limit} bytes (decompression bomb?)"
         ));
     }
     Ok(written)
@@ -85,7 +84,7 @@ pub async fn download_file(
         .context("Failed to build HTTP client")?;
 
     if args.verbose {
-        p(format!("Connecting to: {}", url).as_str(), true);
+        p(format!("Connecting to: {url}").as_str(), true);
     }
 
     let mut retries = 0;
@@ -104,21 +103,17 @@ pub async fn download_file(
                 if retryable {
                     retries += 1;
                     if retries < MAX_RETRIES {
-                        p(format!("Download failed with status {} (retry {}/{}), retrying in 5 seconds...", status, retries, MAX_RETRIES).as_str(), true);
+                        p(format!("Download failed with status {status} (retry {retries}/{MAX_RETRIES}), retrying in 5 seconds...").as_str(), true);
                         sleep(Duration::from_secs(5)).await;
                         continue;
-                    } else {
-                        return Err(anyhow::anyhow!(
-                            "Failed to download {}: Max retries exceeded.",
-                            url
-                        ));
                     }
+                    return Err(anyhow::anyhow!(
+                        "Failed to download {url}: Max retries exceeded."
+                    ));
                 }
                 if !status.is_success() {
                     return Err(anyhow::anyhow!(
-                        "Failed to download {}: HTTP status {}",
-                        url,
-                        status
+                        "Failed to download {url}: HTTP status {status}"
                     ));
                 }
                 break res;
@@ -128,33 +123,30 @@ pub async fn download_file(
                 if retries < MAX_RETRIES {
                     p(
                         format!(
-                            "Download failed: {} (retry {}/{}), retrying in 5 seconds...",
-                            e, retries, MAX_RETRIES
+                            "Download failed: {e} (retry {retries}/{MAX_RETRIES}), retrying in 5 seconds..."
                         )
                         .as_str(),
                         true,
                     );
                     sleep(Duration::from_secs(5)).await;
                     continue;
-                } else {
-                    return Err(anyhow::anyhow!(
-                        "Failed to download {}: Max retries exceeded. Last error: {}",
-                        url,
-                        e
-                    ));
                 }
+                return Err(anyhow::anyhow!(
+                    "Failed to download {url}: Max retries exceeded. Last error: {e}"
+                ));
             }
         }
     };
 
     let total_size = response.content_length().unwrap_or(0);
     if args.verbose && total_size > 0 {
-        p(format!("File size: {} bytes", total_size).as_str(), true);
+        p(format!("File size: {total_size} bytes").as_str(), true);
     }
 
     if !silent {
         let pb = ProgressBar::new(total_size);
         pb.set_style(
+            #[allow(clippy::literal_string_with_formatting_args)]
             ProgressStyle::default_bar()
                 .template("{prefix} {bar:20.cyan/blue} {msg}")
                 .expect("Failed to create progress style"),
@@ -172,9 +164,7 @@ pub async fn download_file(
         downloaded = downloaded.saturating_add(chunk.len() as u64);
         if downloaded > MAX_DOWNLOAD_BYTES {
             return Err(anyhow::anyhow!(
-                "Refusing to download more than {} bytes from {}",
-                MAX_DOWNLOAD_BYTES,
-                url
+                "Refusing to download more than {MAX_DOWNLOAD_BYTES} bytes from {url}"
             ));
         }
         file.as_file_mut()
@@ -215,16 +205,12 @@ pub fn extract_from_zip(
     let mut sample_names: Vec<String> = Vec::new();
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|e| {
-            anyhow::anyhow!(
-                "Could not read file index {} in the downloaded zip file: {}",
-                i,
-                e
-            )
+            anyhow::anyhow!("Could not read file index {i} in the downloaded zip file: {e}")
         })?;
         let name = entry.name().to_string();
         if name.ends_with(ext) {
             copy_capped(&mut entry, xml_file.as_file_mut(), MAX_DECOMPRESSED_BYTES)
-                .context(format!("Failed to extract {} file", ext))?;
+                .context(format!("Failed to extract {ext} file"))?;
             extracted = true;
             break;
         }
@@ -244,10 +230,11 @@ pub fn extract_from_zip(
     Ok(())
 }
 
-/// Escapes the SQL `LIKE` metacharacters `%`, `_`, and `\` with a leading `\`,
-/// so that a STIG/CCI/CWE ID containing a literal underscore can be used as a
-/// `LIKE` pattern without the underscore being treated as a single-character
-/// wildcard. Pair with `LIKE ? ESCAPE '\'` (or `'\\'`) on the SQL side.
+/// Escapes SQL `LIKE` metacharacters (`%`, `_`, `\`) with a leading `\`.
+///
+/// Use this so a STIG/CCI/CWE ID containing a literal underscore can be used
+/// as a `LIKE` pattern without the underscore being treated as a wildcard.
+/// Pair with `LIKE ? ESCAPE '\'` (or `'\\'`) on the SQL side.
 #[must_use]
 pub fn escape_like(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -262,10 +249,76 @@ pub fn escape_like(s: &str) -> String {
 
 pub fn p(s: &str, newline: bool) {
     if newline {
-        println!("{}", s);
+        println!("{s}");
     } else {
-        print!("{}", s);
+        print!("{s}");
         // Ignore flush errors so a closed downstream pipe doesn't panic the build.
         let _ = io::stdout().flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+
+    fn args() -> Args {
+        Args {
+            output: "stitch.db".to_string(),
+            stig_url: DEFAULT_STIG_URL.to_string(),
+            verbose: false,
+        }
+    }
+
+    fn make_zip(entries: &[(&str, &[u8])]) -> NamedTempFile {
+        let f = NamedTempFile::new().unwrap();
+        {
+            let mut zw = zip::ZipWriter::new(f.reopen().unwrap());
+            let opts =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            for (name, data) in entries {
+                zw.start_file(*name, opts).unwrap();
+                zw.write_all(data).unwrap();
+            }
+            zw.finish().unwrap();
+        }
+        f
+    }
+
+    #[test]
+    fn escape_like_escapes_metacharacters() {
+        assert_eq!(escape_like("plain"), "plain");
+        assert_eq!(escape_like("SV-12_345"), "SV-12\\_345");
+        assert_eq!(escape_like("100%"), "100\\%");
+        assert_eq!(escape_like("a\\b"), "a\\\\b");
+        assert_eq!(escape_like("a_b%c\\"), "a\\_b\\%c\\\\");
+    }
+
+    #[test]
+    fn extract_from_zip_picks_matching_extension() {
+        let zip = make_zip(&[("readme.txt", b"hi"), ("data.xml", b"<x/>")]);
+        let mut out = NamedTempFile::new().unwrap();
+        extract_from_zip(&zip, &mut out, ".xml", &args()).unwrap();
+        let got = std::fs::read(out.path()).unwrap();
+        assert_eq!(got, b"<x/>");
+    }
+
+    #[test]
+    fn extract_from_zip_skips_non_matching_then_extracts() {
+        let zip = make_zip(&[("a.txt", b"a"), ("b.txt", b"b"), ("c.xml", b"<c/>")]);
+        let mut out = NamedTempFile::new().unwrap();
+        extract_from_zip(&zip, &mut out, ".xml", &args()).unwrap();
+        assert_eq!(std::fs::read(out.path()).unwrap(), b"<c/>");
+    }
+
+    #[test]
+    fn extract_from_zip_no_match_returns_err() {
+        let zip = make_zip(&[("a.txt", b"a"), ("b.json", b"{}")]);
+        let mut out = NamedTempFile::new().unwrap();
+        let err = extract_from_zip(&zip, &mut out, ".xml", &args()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no entry ending in '.xml'"), "got: {msg}");
+        assert!(msg.contains("a.txt"), "should list seen names: {msg}");
     }
 }

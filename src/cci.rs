@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 use crate::common::{Args, download_file, extract_from_zip, p};
+use std::fmt::Write as _;
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -64,7 +65,7 @@ fn extract_control_identifier(input: &str) -> String {
     let Some(caps) = get_rmf_regex().captures(input) else {
         return String::new();
     };
-    let family = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+    let family = caps.get(1).map_or("", |m| m.as_str());
     let Some(control_num_str) = caps.get(2).map(|m| m.as_str()) else {
         return String::new();
     };
@@ -72,13 +73,13 @@ fn extract_control_identifier(input: &str) -> String {
         return String::new();
     };
 
-    let mut result = format!("{}-{}", family, control_num);
+    let mut result = format!("{family}-{control_num}");
 
     if let Some(enhancement_match) = caps.get(3) {
         let Ok(enhancement_num) = enhancement_match.as_str().parse::<u32>() else {
             return String::new();
         };
-        result.push_str(&format!("({})", enhancement_num));
+        write!(result, "({enhancement_num})").unwrap();
     }
 
     result
@@ -93,7 +94,7 @@ async fn cci_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
             .expect("Failed to create progress style"),
     );
     bar.set_prefix("Parsing CCIs…");
-    bar.set_message(format!("{}/4349?", on));
+    bar.set_message(format!("{on}/4349?"));
     let xml_content = fs::read_to_string(xml.path())
         .await
         .context("Failed to read CCI XML file")?;
@@ -112,7 +113,7 @@ async fn cci_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+            Ok(Event::Start(ref e) | Event::Empty(ref e)) => {
                 current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
 
                 match current_element.as_str() {
@@ -192,7 +193,7 @@ async fn cci_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
                             {
                                 // Insert the CCI
                                 on += 1;
-                                bar.set_message(format!("{}/4349?", on));
+                                bar.set_message(format!("{on}/4349?"));
                                 bar.inc(1);
                                 conn.execute(
                                     "INSERT OR REPLACE INTO RMFCCI (id, RMFControlId, definition) VALUES (?1, ?2, ?3)",
@@ -212,13 +213,44 @@ async fn cci_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
                 current_element.clear();
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(anyhow::anyhow!("CCI XML parsing error: {}", e)),
+            Err(e) => return Err(anyhow::anyhow!("CCI XML parsing error: {e}")),
             _ => {}
         }
         buf.clear();
     }
 
-    bar.finish_with_message(format!("✓ ({})", on));
+    bar.finish_with_message(format!("✓ ({on})"));
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_control_identifier;
+
+    #[test]
+    fn extract_control_identifier_round_trip() {
+        let cases: &[(&str, &str)] = &[
+            ("AC-1", "AC-1"),
+            ("AC-03", "AC-3"),
+            ("AC-3 (1)", "AC-3(1)"),
+            ("ac-3", ""),              // wrong case → no match
+            ("AC-3(1)(2)", "AC-3(1)"), // only first enhancement captured
+            ("", ""),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                extract_control_identifier(input),
+                *expected,
+                "extract_control_identifier({input:?})",
+            );
+        }
+    }
+
+    #[test]
+    fn extract_control_identifier_overflow_returns_empty() {
+        // The regex matches arbitrarily long digit runs; overflow must not panic.
+        assert_eq!(extract_control_identifier("AC-9999999999"), "");
+        assert_eq!(extract_control_identifier("AC-1(9999999999)"), "");
+    }
 }

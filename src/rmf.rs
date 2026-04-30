@@ -70,7 +70,7 @@ async fn rmf_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+            Ok(Event::Start(ref e) | Event::Empty(ref e)) => {
                 current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
 
                 match current_element.as_str() {
@@ -101,9 +101,9 @@ async fn rmf_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
                         // ^\s*[A-Z]{2}-\d{1,2}(?:\(\d{1,2}\))?\s*$
                         if re.is_match(&tmp_num2) {
                             if in_enhancements {
-                                tmp_e_number = tmp_num2.clone();
+                                tmp_e_number.clone_from(&tmp_num2);
                             } else {
-                                tmp_number = tmp_num2.clone();
+                                tmp_number.clone_from(&tmp_num2);
                             }
                             let family = RMFFamily {
                                 id: 0,
@@ -188,7 +188,7 @@ async fn rmf_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
                 current_element.clear();
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(anyhow::anyhow!("RMF XML parsing error: {}", e)),
+            Err(e) => return Err(anyhow::anyhow!("RMF XML parsing error: {e}")),
             _ => {}
         }
         buf.clear();

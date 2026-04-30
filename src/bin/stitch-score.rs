@@ -1,6 +1,10 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+#![allow(clippy::future_not_send)]
+#![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
+#![allow(clippy::too_many_lines)]
+
 use stitch::{nvd::CvssDataV40, stig::Stig, stig::StigCheck};
 
 use anyhow::{Context, Result};
@@ -26,7 +30,7 @@ const MINIMUM_CVES_TO_COMPLETE_ROUND: usize = 50;
 
 fn get_controls_from_controls(controls: Vec<String>, db_path: &str) -> Result<()> {
     let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {}", db_path))?;
+        .with_context(|| format!("Failed to open database file: {db_path}"))?;
 
     let placeholders = controls.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let query_controls = format!(
@@ -41,8 +45,7 @@ fn get_controls_from_controls(controls: Vec<String>, db_path: &str) -> Result<()
 		FROM RMFCCI rc
 		JOIN RMFControl c ON rc.RMFControlId = c.id
 		JOIN RMFFamily f ON c.RMFFamilyId = f.id
-		WHERE c.number IN ({})",
-        placeholders
+		WHERE c.number IN ({placeholders})"
     );
 
     // Prepare statement to find all CCIs for a given control
@@ -110,9 +113,9 @@ fn get_controls_from_controls(controls: Vec<String>, db_path: &str) -> Result<()
     Ok(())
 }
 
-fn get_controls_from_ccis(ccis: Vec<u32>, db_path: &str) -> Result<()> {
+fn get_controls_from_ccis(ccis: &[u32], db_path: &str) -> Result<()> {
     let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {}", db_path))?;
+        .with_context(|| format!("Failed to open database file: {db_path}"))?;
 
     // Prepare statement to find controls for a single CCI
     let query_controls = "
@@ -132,15 +135,13 @@ fn get_controls_from_ccis(ccis: Vec<u32>, db_path: &str) -> Result<()> {
 
     // Prepare statement to find all CCIs for a given control
     let placeholders = ccis.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-    let sql_ccis = format!(
-        "SELECT id FROM RMFCCI WHERE RMFControlId = ?1 AND id IN ({})",
-        placeholders
-    );
+    let sql_ccis =
+        format!("SELECT id FROM RMFCCI WHERE RMFControlId = ?1 AND id IN ({placeholders})");
     let mut stmt_ccis = conn.prepare(&sql_ccis)?;
 
     let mut unique_controls: HashMap<u32, serde_json::Value> = HashMap::new();
 
-    for cci_id in &ccis {
+    for cci_id in ccis {
         let rows = stmt_controls.query_map([cci_id], |row: &Row| {
             let control_number: String = row.get(0)?;
             let control_name: String = row.get(1)?;
@@ -175,7 +176,7 @@ fn get_controls_from_ccis(ccis: Vec<u32>, db_path: &str) -> Result<()> {
         // Find all CCIs for this control_id
         let mut tmp_params: Vec<u32> = Vec::new();
         tmp_params.push(control_id);
-        tmp_params.append(&mut ccis.clone());
+        tmp_params.append(&mut ccis.to_owned());
         let cci_rows = stmt_ccis.query_map(rusqlite::params_from_iter(tmp_params), |row| {
             let cci_id: u32 = row.get(0)?;
             Ok(json!(format!("CCI-{:06}", cci_id)))
@@ -223,6 +224,7 @@ fn mean_impact(iter: impl Iterator<Item = String>, affects: bool) -> String {
         return String::from("NONE");
     }
 
+    #[allow(clippy::cast_precision_loss)]
     let average = (score as f32) / (count as f32);
 
     if average < 0.33 {
@@ -235,11 +237,12 @@ fn mean_impact(iter: impl Iterator<Item = String>, affects: bool) -> String {
 }
 
 /// Calculates the mode (most frequent value) of a sequence of items.
+#[allow(clippy::needless_pass_by_value)]
 fn mode(iter: impl Iterator<Item = String>, list: Vec<String>) -> String {
     // Step 0: Set the initial HashMaps
     let mut counts: HashMap<String, usize> = HashMap::new();
     for item in &list {
-        counts.insert((&item).to_string(), 0);
+        counts.insert(item.clone(), 0);
     }
 
     // Step 1: Count the frequency of each item from the iterator.
@@ -271,16 +274,15 @@ fn mode(iter: impl Iterator<Item = String>, list: Vec<String>) -> String {
         // If there is a single unique mode, return it.
         // .into_iter().next().unwrap() efficiently moves the String out of the Vec.
         return modes.into_iter().next().unwrap();
-    } else {
-        // If there is a tie, use the provided list to resolve it.
-        // For performance, convert the modes into a HashSet for quick lookups.
-        let mode_set: Vec<String> = modes.into_iter().collect();
+    }
+    // If there is a tie, use the provided list to resolve it.
+    // For performance, convert the modes into a HashSet for quick lookups.
+    let mode_set: Vec<String> = modes.into_iter().collect();
 
-        // Iterate through the tie-breaker list.
-        for item in &list {
-            if mode_set.contains(item) {
-                return (&item).to_string();
-            }
+    // Iterate through the tie-breaker list.
+    for item in &list {
+        if mode_set.contains(item) {
+            return item.clone();
         }
     }
 
@@ -292,35 +294,20 @@ fn mode(iter: impl Iterator<Item = String>, list: Vec<String>) -> String {
 fn map_metric(metric: &str) -> Result<&'static str> {
     match metric {
         // Attack Vector (AV)
-        "NETWORK" => Ok("N"),
-        "ADJACENT" => Ok("A"),
-        "LOCAL" => Ok("L"),
-        "PHYSICAL" => Ok("P"),
+        "NETWORK" | "NONE" | "NEGLIGIBLE" | "NO" => Ok("N"),
+        "ADJACENT" | "ACTIVE" | "ATTACKED" | "AUTOMATIC" => Ok("A"),
+        "LOCAL" | "LOW" => Ok("L"),
+        "PHYSICAL" | "PRESENT" | "PASSIVE" | "PROOF_OF_CONCEPT" => Ok("P"),
 
         // Attack Complexity (AC) & Privileges Required (PR) & Impacts (VC, VI, etc.)
         "HIGH" => Ok("H"),
-        "LOW" => Ok("L"),
-
-        // Attack Requirements (AT)
-        "PRESENT" => Ok("P"),
-        "NONE" => Ok("N"),
-
-        // User Interaction (UI)
-        "ACTIVE" => Ok("A"),
-        "PASSIVE" => Ok("P"),
 
         // Exploit Maturity (E)
         "NOT_DEFINED" => Ok("X"),
-        "ATTACKED" => Ok("A"),
-        "PROOF_OF_CONCEPT" => Ok("P"),
-        "UNREPORTED" => Ok("U"),
-
-        // Safety (S)
-        "NEGLIGIBLE" => Ok("N"),
+        "UNREPORTED" | "USER" => Ok("U"),
 
         // Automatable (AU)
         "YES" => Ok("Y"),
-        "NO" => Ok("N"),
 
         // Provider Urgency (U)
         "RED" => Ok("RED"),
@@ -329,28 +316,24 @@ fn map_metric(metric: &str) -> Result<&'static str> {
         "CLEAR" => Ok("CLEAR"),
 
         // Recovery (R)
-        "AUTOMATIC" => Ok("A"),
-        "USER" => Ok("U"),
         "IRRECOVERABLE" => Ok("I"),
 
         // Value Density (V)
         "DIFFUSE" => Ok("D"),
         "CONCENTRATED" => Ok("C"),
 
-        // Vulnerability Response Effort (RE)
-        "MODERATE" => Ok("M"),
-
-        // C, I, and A Requirements (CR, IR, AR)
-        "MEDIUM" => Ok("M"),
+        // Vulnerability Response Effort (RE) & C/I/A Requirements
+        "MODERATE" | "MEDIUM" => Ok("M"),
 
         // Modified Subsequent System Impacts
         "SAFETY" => Ok("S"),
 
-        _ => Err(anyhow::anyhow!("Unknown CVSS metric value: {}", metric)),
+        _ => Err(anyhow::anyhow!("Unknown CVSS metric value: {metric}")),
     }
 }
 
 /// A tool to calculate CVSS scores from a vector string or a CVE identifier.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -380,7 +363,7 @@ struct Args {
 
 fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
     let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {}", db_path))?;
+        .with_context(|| format!("Failed to open database file: {db_path}"))?;
 
     // Lowercase both sides at comparison time. The previous
     // `replace("ULE", "ule").replace("R", "r")` normalization was a footgun:
@@ -477,7 +460,7 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
 
         for stigcheck in stigchecks {
             let mut legacy_ids: Vec<serde_json::Value> = Vec::new();
-            for lid in stigcheck.legacy_ids.split(",") {
+            for lid in stigcheck.legacy_ids.split(',') {
                 legacy_ids.push(json!(lid));
             }
 
@@ -493,7 +476,10 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
 
             let disa_id_lc = stigcheck.disa_id.to_ascii_lowercase();
             let (status, finding_details) = if ids.iter().any(|id| disa_id_lc.starts_with(id)) {
-                ("open".to_string(), "|organization| identified findings against this check.".to_string())
+                (
+                    "open".to_string(),
+                    "|organization| identified findings against this check.".to_string(),
+                )
             } else {
                 ("not_reviewed".to_string(), String::new())
             };
@@ -607,7 +593,7 @@ fn main() -> Result<()> {
         }
     } else if args.ccis {
         let ccis: Vec<u32> = input
-            .split(",")
+            .split(',')
             .map(|s| {
                 s.to_ascii_uppercase()
                     .trim_start_matches("CCI-")
@@ -617,9 +603,9 @@ fn main() -> Result<()> {
             .filter(|&id| id != 0)
             .collect();
 
-        _ = get_controls_from_ccis(ccis, &args.db);
+        _ = get_controls_from_ccis(&ccis, &args.db);
     } else if args.controls {
-        let controls: Vec<String> = input.split(",").map(|s| s.to_ascii_uppercase()).collect();
+        let controls: Vec<String> = input.split(',').map(str::to_ascii_uppercase).collect();
 
         _ = get_controls_from_controls(controls, &args.db);
     } else if input.starts_with("CVSS:") {
@@ -650,7 +636,7 @@ fn score_from_vector(vector: &str, args: &Args) -> Result<()> {
     if vector.starts_with("CVSS:4.0") {
         let base = Vector::from_str(vector).context("Failed to parse CVSS 4.0 vector string")?;
         if args.verbose {
-            println!("CVSS 4.0 Vector: {}", vector);
+            println!("CVSS 4.0 Vector: {vector}");
             println!("Qualitative Severity: {}", base.score().severity());
             println!("Base Score: {:.1}", base.score().value());
         } else {
@@ -659,7 +645,7 @@ fn score_from_vector(vector: &str, args: &Args) -> Result<()> {
     } else if vector.starts_with("CVSS:3.1") || vector.starts_with("CVSS:3.0") {
         let base = Base::from_str(vector).context("Failed to parse CVSS 3.x vector string")?;
         if args.verbose {
-            println!("CVSS 3.x Vector: {}", vector);
+            println!("CVSS 3.x Vector: {vector}");
             println!("Qualitative Severity: {}", base.severity());
             println!("Base Score: {:.1}", base.score().value());
         } else {
@@ -672,9 +658,10 @@ fn score_from_vector(vector: &str, args: &Args) -> Result<()> {
 }
 
 /// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
+#[allow(clippy::similar_names)]
 fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
     let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {}", db_path))?;
+        .with_context(|| format!("Failed to open database file: {db_path}"))?;
 
     let mut stmt = conn.prepare(
         "SELECT
@@ -756,7 +743,7 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
                 row.get::<_, u32>(33)?,    // score version
             ))
         })
-        .with_context(|| format!("Could not find CVE '{}' in the database.", cve_id))?;
+        .with_context(|| format!("Could not find CVE '{cve_id}' in the database."))?;
 
     // Map the database's full metric names to their CVSS 4.0 single-letter abbreviations
     let vector_string = format!(
@@ -857,8 +844,14 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
         let mut error_count = 0;
         let cwe_data_result: Vec<CWEDetails> = cwe_data_elements
             .filter_map(|r| match r {
-                Ok(v) => { success_count += 1; Some(v) },
-                Err(_e) => { error_count += 1; /*eprintln!("DEBUG: Row error: {}", e);*/ None },
+                Ok(v) => {
+                    success_count += 1;
+                    Some(v)
+                }
+                Err(_e) => {
+                    error_count += 1; /*eprintln!("DEBUG: Row error: {}", e);*/
+                    None
+                }
             })
             .collect();
         //eprintln!("DEBUG: CWE query returned {} successes, {} errors, total rows = {}", success_count, error_count, cwe_data_result.len());
@@ -903,7 +896,7 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
 
 fn score_cwes(db_path: &str, args: &Args) -> Result<()> {
     let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {}", db_path))?;
+        .with_context(|| format!("Failed to open database file: {db_path}"))?;
 
     let mut stmt = conn.prepare(
         "SELECT
@@ -1043,9 +1036,9 @@ fn get_cve_data_by_weakness(
             value_density: row.get(30)?,
             vulnerability_response_effort: row.get(31)?,
             // --- Hardcoded values from your original example ---
-            version: format!("{}.0", score_version),
+            version: format!("{score_version}.0"),
             base_score: 0.0,
-            base_severity: "".to_string(),
+            base_severity: String::new(),
             vector_string: row.get(32)?,
         })
     })?;
@@ -1085,6 +1078,7 @@ fn get_parent_cwes(conn: &Connection, weakness_id: u32, view_id: u32) -> Result<
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 struct CWEDetails {
     id: u32,
     name: String,
@@ -1103,7 +1097,7 @@ struct CWEDetails {
 /// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
 fn score_from_stig(stig_id: &str, db_path: &str, args: &Args) -> Result<()> {
     let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {}", db_path))?;
+        .with_context(|| format!("Failed to open database file: {db_path}"))?;
 
     // Use case-insensitive LIKE with the prefix escaped, so a literal `_` in
     // the rule ID is matched as `_` not as a single-char wildcard, and the
@@ -1134,18 +1128,18 @@ fn score_from_stig(stig_id: &str, db_path: &str, args: &Args) -> Result<()> {
 
         let stig_data_elements = stmt_stig.query_map(params![stig_id_pattern], |row| {
             Ok(CWEDetails {
-                id: row.get::<_, u32>(0)?,               //id
-                name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),      //name
+                id: row.get::<_, u32>(0)?,                                         //id
+                name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),        //name
                 abstraction: row.get::<_, Option<String>>(2)?.unwrap_or_default(), //abstraction
-                category: row.get::<_, bool>(3)?,        //category
-                view: row.get::<_, bool>(4)?,            //view
-                confidentiality: row.get::<_, bool>(5)?, //confidentiality
-                integrity: row.get::<_, bool>(6)?,       //integrity
-                availability: row.get::<_, bool>(7)?,    //availability
-                disaid: row.get::<_, Option<String>>(8)?.unwrap_or_default(), //DISAId
-                severity: row.get::<_, Option<String>>(9)?.unwrap_or_default(), //severity
-                control: row.get::<_, Option<String>>(10)?.unwrap_or_default(),      //RMF Control
-                cci: row.get::<_, u32>(11)?.to_string(), //CCI
+                category: row.get::<_, bool>(3)?,                                  //category
+                view: row.get::<_, bool>(4)?,                                      //view
+                confidentiality: row.get::<_, bool>(5)?,                           //confidentiality
+                integrity: row.get::<_, bool>(6)?,                                 //integrity
+                availability: row.get::<_, bool>(7)?,                              //availability
+                disaid: row.get::<_, Option<String>>(8)?.unwrap_or_default(),      //DISAId
+                severity: row.get::<_, Option<String>>(9)?.unwrap_or_default(),    //severity
+                control: row.get::<_, Option<String>>(10)?.unwrap_or_default(),    //RMF Control
+                cci: row.get::<_, u32>(11)?.to_string(),                           //CCI
             })
         })?;
 
@@ -1154,13 +1148,13 @@ fn score_from_stig(stig_id: &str, db_path: &str, args: &Args) -> Result<()> {
         stig_data_result.with_context(|| "No records found in the database.")?
     }; // `stmt_cwe` and `cwe_data_elements` are dropped here, releasing the borrow on `conn`.
 
-    score_from(conn, stig_data, args)
+    score_from(&conn, stig_data, args)
 }
 
 /// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
 fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
     let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {}", db_path))?;
+        .with_context(|| format!("Failed to open database file: {db_path}"))?;
 
     let cwe_num_id: u32 = cwe_id.to_uppercase().trim_start_matches("CWE-").parse()?;
 
@@ -1188,18 +1182,18 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 
         let cwe_data_elements = stmt_cwe.query_map(params![cwe_num_id], |row| {
             Ok(CWEDetails {
-                id: row.get::<_, u32>(0)?,               //id
-                name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),      //name
+                id: row.get::<_, u32>(0)?,                                         //id
+                name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),        //name
                 abstraction: row.get::<_, Option<String>>(2)?.unwrap_or_default(), //abstraction
-                category: row.get::<_, bool>(3)?,        //category
-                view: row.get::<_, bool>(4)?,            //view
-                confidentiality: row.get::<_, bool>(5)?, //confidentiality
-                integrity: row.get::<_, bool>(6)?,       //integrity
-                availability: row.get::<_, bool>(7)?,    //availability
-                disaid: row.get::<_, Option<String>>(8)?.unwrap_or_default(), //DISAId
-                severity: row.get::<_, Option<String>>(9)?.unwrap_or_default(), //severity
-                control: row.get::<_, Option<String>>(10)?.unwrap_or_default(),      //RMF Control
-                cci: row.get::<_, u32>(11)?.to_string(), //CCI
+                category: row.get::<_, bool>(3)?,                                  //category
+                view: row.get::<_, bool>(4)?,                                      //view
+                confidentiality: row.get::<_, bool>(5)?,                           //confidentiality
+                integrity: row.get::<_, bool>(6)?,                                 //integrity
+                availability: row.get::<_, bool>(7)?,                              //availability
+                disaid: row.get::<_, Option<String>>(8)?.unwrap_or_default(),      //DISAId
+                severity: row.get::<_, Option<String>>(9)?.unwrap_or_default(),    //severity
+                control: row.get::<_, Option<String>>(10)?.unwrap_or_default(),    //RMF Control
+                cci: row.get::<_, u32>(11)?.to_string(),                           //CCI
             })
         })?;
 
@@ -1208,11 +1202,11 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
         cwe_data_result.with_context(|| "No records found in the database.")?
     }; // `stmt_cwe` and `cwe_data_elements` are dropped here, releasing the borrow on `conn`.
 
-    score_from(conn, cwe_data, args)
+    score_from(&conn, cwe_data, args)
 }
 
 /// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
-fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> Result<()> {
+fn score_from(conn: &Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> Result<()> {
     if cwe_data.is_empty() {
         eprintln!("Invalid CWE data provided");
         return Ok(());
@@ -1230,7 +1224,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
             cwe_data_flatened.control.push_str(&element.control);
         }
         cwe_data_flatened.cci.push(',');
-        cwe_data_flatened.cci.push_str(&element.cci)
+        cwe_data_flatened.cci.push_str(&element.cci);
     }
 
     if args.verbose {
@@ -1266,7 +1260,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
     // ROUND 1.1: Direct CVSS 4.0 scores
     // Find direct instances of this CWE in the Vulnerability table
 
-    let mut cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 4, cwe_data_flatened.id)?;
+    let mut cves: Vec<CvssDataV40> = get_cve_data_by_weakness(conn, 4, cwe_data_flatened.id)?;
 
     if args.verbose {
         println!("1.1: Found {} CVSS 4.0 CVEs.", cves.len());
@@ -1274,7 +1268,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
 
     // ROUND 1.2: Conversion of direct CVSS 3.0 and 3.1 scores
     if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
-        let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 3, cwe_data_flatened.id)?;
+        let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(conn, 3, cwe_data_flatened.id)?;
 
         if args.verbose {
             println!("1.2: Found {} CVSS 3 and 3.1 CVEs.", tmp_cves.len());
@@ -1284,7 +1278,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
 
     // ROUND 1.3: Conversion of direct CVSS 2.0 scores
     if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
-        let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 2, cwe_data_flatened.id)?;
+        let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(conn, 2, cwe_data_flatened.id)?;
         if args.verbose {
             println!("1.3: Found {} CVSS 2.0 CVEs.", tmp_cves.len());
         }
@@ -1299,15 +1293,15 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
         if args.verbose {
             println!("Starting Round 2 Scoring.");
         }
-        let mut next_generation_cwes: Vec<u32> = get_child_cwes(&conn, cwe_data_flatened.id, 1000)?;
-        next_generation_cwes.sort();
+        let mut next_generation_cwes: Vec<u32> = get_child_cwes(conn, cwe_data_flatened.id, 1000)?;
+        next_generation_cwes.sort_unstable();
         next_generation_cwes.dedup();
         next_generation_cwes.retain(|x| !processed_cwes.contains(x));
 
         while !next_generation_cwes.is_empty() {
             // ROUND 2.1: Child CWEs of View 1000 CVSS 4.0 scores
             for child in &next_generation_cwes {
-                let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 4, *child)?;
+                let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(conn, 4, *child)?;
                 if args.verbose {
                     println!("2.1: Found {} CVSS 4.0 CVEs.", tmp_cves.len());
                 }
@@ -1317,7 +1311,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
             if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
                 // ROUND 2.2: Child CWEs of View 1000 CVSS 3.1 and 3.0 scores
                 for child in &next_generation_cwes {
-                    let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 3, *child)?;
+                    let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(conn, 3, *child)?;
                     if args.verbose {
                         println!("2.2: Found {} CVSS 3.0 and 3.1 CVEs.", tmp_cves.len());
                     }
@@ -1328,7 +1322,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
             if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
                 // ROUND 2.3: Child CWEs of View 1000 CVSS 2 scores
                 for child in &next_generation_cwes {
-                    let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 2, *child)?;
+                    let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(conn, 2, *child)?;
                     if args.verbose {
                         println!("2.3: Found {} CVSS 2 CVEs.", tmp_cves.len());
                     }
@@ -1341,10 +1335,10 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
             if cves.len() < MINIMUM_CVES_TO_SCORE {
                 let mut tmp_next_generation_cwes: Vec<u32> = Vec::new();
                 for n in &next_generation_cwes {
-                    let child_cwes: Vec<u32> = get_child_cwes(&conn, *n, 1000)?;
+                    let child_cwes: Vec<u32> = get_child_cwes(conn, *n, 1000)?;
                     tmp_next_generation_cwes.extend(child_cwes);
                 }
-                tmp_next_generation_cwes.sort();
+                tmp_next_generation_cwes.sort_unstable();
                 tmp_next_generation_cwes.dedup();
                 tmp_next_generation_cwes.retain(|x| !processed_cwes.contains(x));
                 next_generation_cwes = tmp_next_generation_cwes;
@@ -1363,16 +1357,15 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
         if args.verbose {
             println!("Starting Round 3 Scoring.");
         }
-        let mut prev_generation_cwes: Vec<u32> =
-            get_parent_cwes(&conn, cwe_data_flatened.id, 1000)?;
-        prev_generation_cwes.sort();
+        let mut prev_generation_cwes: Vec<u32> = get_parent_cwes(conn, cwe_data_flatened.id, 1000)?;
+        prev_generation_cwes.sort_unstable();
         prev_generation_cwes.dedup();
         prev_generation_cwes.retain(|x| !processed_cwes.contains(x));
 
         while !prev_generation_cwes.is_empty() {
             // ROUND 3.1: Parent/Ancestor CWEs of View 1000 CVSS 4.0 scores
             for parent in &prev_generation_cwes {
-                let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 4, *parent)?;
+                let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(conn, 4, *parent)?;
                 if args.verbose {
                     println!("3.1: Found {} CVSS 4.0 CVEs.", tmp_cves.len());
                 }
@@ -1382,7 +1375,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
             if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
                 // ROUND 3.2: Parent/Ancestor CWEs of View 1000 CVSS 3.1 and 3.0 scores
                 for parent in &prev_generation_cwes {
-                    let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 3, *parent)?;
+                    let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(conn, 3, *parent)?;
                     if args.verbose {
                         println!("3.2: Found {} CVSS 3.0 and 3.1 CVEs.", tmp_cves.len());
                     }
@@ -1393,7 +1386,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
             if cves.len() < MINIMUM_CVES_TO_COMPLETE_ROUND {
                 // ROUND 3.3: Parent/Ancestor CWEs of View 1000 CVSS 2 scores
                 for parent in &prev_generation_cwes {
-                    let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 2, *parent)?;
+                    let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(conn, 2, *parent)?;
                     if args.verbose {
                         println!("3.3: Found {} CVSS 2 CVEs.", tmp_cves.len());
                     }
@@ -1407,8 +1400,8 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
                 let mut sibling_cwes: Vec<u32> = Vec::new();
                 // ROUND 3.4: Cousin CWEs of View 1000 CVSS 4.0 scores
                 for parent in &prev_generation_cwes {
-                    sibling_cwes.extend(get_child_cwes(&conn, *parent, 1000)?);
-                    sibling_cwes.sort();
+                    sibling_cwes.extend(get_child_cwes(conn, *parent, 1000)?);
+                    sibling_cwes.sort_unstable();
                     sibling_cwes.dedup();
                     sibling_cwes.retain(|x| !processed_cwes.contains(x));
                 }
@@ -1416,7 +1409,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
                 processed_cwes.extend(sibling_cwes.clone());
 
                 for sibling in &sibling_cwes {
-                    let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(&conn, 4, *sibling)?;
+                    let tmp_cves: Vec<CvssDataV40> = get_cve_data_by_weakness(conn, 4, *sibling)?;
                     if args.verbose {
                         println!("3.4: Found {} CVSS 4.0 CVEs.", tmp_cves.len());
                     }
@@ -1427,7 +1420,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
                     // ROUND 3.5: Cousin CWEs of View 1000 CVSS 3.0 and 3.1 scores
                     for sibling in &sibling_cwes {
                         let tmp_cves: Vec<CvssDataV40> =
-                            get_cve_data_by_weakness(&conn, 3, *sibling)?;
+                            get_cve_data_by_weakness(conn, 3, *sibling)?;
                         if args.verbose {
                             println!("3.5: Found {} CVSS 3.0 and 3.1 CVEs.", tmp_cves.len());
                         }
@@ -1439,7 +1432,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
                     // ROUND 3.6: Cousin CWEs of View 1000 CVSS 2.0 scores
                     for sibling in sibling_cwes {
                         let tmp_cves: Vec<CvssDataV40> =
-                            get_cve_data_by_weakness(&conn, 2, sibling)?;
+                            get_cve_data_by_weakness(conn, 2, sibling)?;
                         if args.verbose {
                             println!("3.6: Found {} CVSS 2.0 CVEs.", tmp_cves.len());
                         }
@@ -1452,10 +1445,10 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
             if cves.len() < MINIMUM_CVES_TO_SCORE {
                 let mut tmp_prev_generation_cwes: Vec<u32> = Vec::new();
                 for p in &prev_generation_cwes {
-                    let parent_cwes: Vec<u32> = get_parent_cwes(&conn, *p, 1000)?;
+                    let parent_cwes: Vec<u32> = get_parent_cwes(conn, *p, 1000)?;
                     tmp_prev_generation_cwes.extend(parent_cwes);
                 }
-                tmp_prev_generation_cwes.sort();
+                tmp_prev_generation_cwes.sort_unstable();
                 tmp_prev_generation_cwes.dedup();
                 tmp_prev_generation_cwes.retain(|x| !processed_cwes.contains(x));
                 prev_generation_cwes = tmp_prev_generation_cwes;
@@ -1467,10 +1460,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
 
     if cves.len() < MINIMUM_CVES_TO_SCORE {
         if args.verbose {
-            println!(
-                "Unable to score with fewer than {} CVEs.",
-                MINIMUM_CVES_TO_SCORE
-            );
+            println!("Unable to score with fewer than {MINIMUM_CVES_TO_SCORE} CVEs.");
         } else {
             println!(
                 "{},\"{}\",{},N/A,{},{},\"{}\",\"{}\",{:.1}",
@@ -1493,7 +1483,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
         let mut tmp_cves: Vec<String> = cves.iter().map(|c| c.vector_string.clone()).collect();
         tmp_cves.sort();
         for cve in &tmp_cves {
-            println!("CVE: {}", cve);
+            println!("CVE: {cve}");
         }
     }
 
@@ -1596,8 +1586,8 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
         vulnerability_response_effort: mode(cves.iter().map(|c| c.vulnerability_response_effort.clone()), vec!["LOW".to_string(), "MODERATE".to_string(), "HIGH".to_string(), "NOT_DEFINED".to_string()]),*/
         version: "4".to_string(),
         base_score: 0.0,
-        base_severity: "".to_string(),
-        vector_string: "".to_string(),
+        base_severity: String::new(),
+        vector_string: String::new(),
     };
 
     if args.verbose {
@@ -1736,7 +1726,7 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
     );
 
     if args.verbose {
-        println!("Scoring VS: {}", vector_string);
+        println!("Scoring VS: {vector_string}");
         println!("Abstraction: {}", cwe_data_flatened.abstraction);
     } else {
         print!(
@@ -1755,4 +1745,114 @@ fn score_from(conn: Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> R
     score_from_vector(&vector_string, args)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|&x| x.to_string()).collect()
+    }
+
+    fn iter(v: &[&str]) -> std::vec::IntoIter<String> {
+        s(v).into_iter()
+    }
+
+    #[test]
+    fn mode_empty_iterator_with_tiebreak_returns_first_list_element() {
+        let res = mode(iter(&[]), s(&["A", "B", "C"]));
+        assert_eq!(res, "A");
+    }
+
+    #[test]
+    fn mode_clear_single_mode_returned() {
+        let res = mode(
+            iter(&["NETWORK", "NETWORK", "LOCAL"]),
+            s(&["NETWORK", "LOCAL"]),
+        );
+        assert_eq!(res, "NETWORK");
+    }
+
+    #[test]
+    fn mode_tied_resolves_via_tiebreak_order() {
+        // Both NETWORK and LOCAL appear twice. Tie-break list says LOCAL wins.
+        let res = mode(
+            iter(&["NETWORK", "LOCAL", "NETWORK", "LOCAL"]),
+            s(&["LOCAL", "NETWORK"]),
+        );
+        assert_eq!(res, "LOCAL");
+    }
+
+    #[test]
+    fn mean_impact_affects_false_returns_none() {
+        let res = mean_impact(iter(&["HIGH", "HIGH", "HIGH"]), false);
+        assert_eq!(res, "NONE");
+    }
+
+    #[test]
+    fn mean_impact_empty_iterator_returns_none() {
+        let res = mean_impact(iter(&[]), true);
+        assert_eq!(res, "NONE");
+    }
+
+    #[test]
+    fn mean_impact_all_none_returns_none() {
+        let res = mean_impact(iter(&["NONE", "NONE", "NONE"]), true);
+        assert_eq!(res, "NONE");
+    }
+
+    #[test]
+    fn mean_impact_mostly_high_returns_high() {
+        let res = mean_impact(iter(&["HIGH", "HIGH", "HIGH", "LOW"]), true);
+        // (3+3+3+1)/4 = 2.5 → HIGH
+        assert_eq!(res, "HIGH");
+    }
+
+    #[test]
+    fn mean_impact_threshold_boundaries() {
+        // avg = 1/3 ≈ 0.3333 → not less than 0.33, so LOW
+        assert_eq!(mean_impact(iter(&["LOW", "NONE", "NONE"]), true), "LOW");
+        // avg = 0/3 = 0 → NONE
+        assert_eq!(mean_impact(iter(&["NONE", "NONE", "NONE"]), true), "NONE");
+        // avg = 2.0 exactly → HIGH (the threshold is < 2.0 → LOW)
+        assert_eq!(mean_impact(iter(&["HIGH", "LOW"]), true), "HIGH");
+        // avg = (3+1+1)/3 ≈ 1.667 → LOW
+        assert_eq!(mean_impact(iter(&["HIGH", "LOW", "LOW"]), true), "LOW");
+    }
+
+    #[test]
+    fn map_metric_attack_vector_values() {
+        assert_eq!(map_metric("NETWORK").unwrap(), "N");
+        assert_eq!(map_metric("ADJACENT").unwrap(), "A");
+        assert_eq!(map_metric("LOCAL").unwrap(), "L");
+        assert_eq!(map_metric("PHYSICAL").unwrap(), "P");
+    }
+
+    #[test]
+    fn map_metric_dual_meaning_letters() {
+        // HIGH and LOW are shared between AC, PR, and impacts.
+        assert_eq!(map_metric("HIGH").unwrap(), "H");
+        assert_eq!(map_metric("LOW").unwrap(), "L");
+        // PRESENT vs NONE for AT.
+        assert_eq!(map_metric("PRESENT").unwrap(), "P");
+        assert_eq!(map_metric("NONE").unwrap(), "N");
+        // ACTIVE/PASSIVE for UI.
+        assert_eq!(map_metric("ACTIVE").unwrap(), "A");
+        assert_eq!(map_metric("PASSIVE").unwrap(), "P");
+    }
+
+    #[test]
+    fn map_metric_provider_urgency_passes_through() {
+        assert_eq!(map_metric("RED").unwrap(), "RED");
+        assert_eq!(map_metric("AMBER").unwrap(), "AMBER");
+        assert_eq!(map_metric("GREEN").unwrap(), "GREEN");
+        assert_eq!(map_metric("CLEAR").unwrap(), "CLEAR");
+    }
+
+    #[test]
+    fn map_metric_unknown_errors() {
+        assert!(map_metric("UNKNOWN_VALUE").is_err());
+        assert!(map_metric("").is_err());
+    }
 }
