@@ -44,7 +44,7 @@ fn copy_capped<R: Read, W: Write>(reader: &mut R, writer: &mut W, limit: u64) ->
     Ok(written)
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     /// Output database file path
@@ -74,7 +74,12 @@ pub async fn download_file(
     silent: bool,
     prefix: String,
     args: &Args,
+    reuse_bar: Option<&ProgressBar>,
 ) -> Result<()> {
+    // When `reuse_bar` is provided, this download updates the caller's
+    // persistent bar (resetting position/length/prefix on entry); the bar's
+    // identity and place in any MultiProgress layout are preserved across
+    // many calls. When None, we create and own a one-shot bar as before.
     let mut progress_bar: Option<ProgressBar> = None;
 
     let client = Client::builder()
@@ -151,14 +156,25 @@ pub async fn download_file(
         }
 
         if !silent {
-            let pb = ProgressBar::new(total_size);
-            pb.set_style(
-                #[allow(clippy::literal_string_with_formatting_args)]
-                ProgressStyle::default_bar()
-                    .template("{prefix} {bar:20.cyan/blue} {msg}")
-                    .expect("Failed to create progress style"),
-            );
-            pb.set_prefix(prefix.clone());
+            let pb = if let Some(existing) = reuse_bar {
+                // Re-point the caller's bar at this download. reset() also
+                // clears elapsed time so ETA reflects the new transfer.
+                existing.set_prefix(prefix.clone());
+                existing.set_length(total_size);
+                existing.set_message(String::new());
+                existing.reset();
+                existing.clone()
+            } else {
+                let pb = ProgressBar::new(total_size);
+                pb.set_style(
+                    #[allow(clippy::literal_string_with_formatting_args)]
+                    ProgressStyle::default_bar()
+                        .template("{prefix} {bar:20.cyan/blue} {msg}")
+                        .expect("Failed to create progress style"),
+                );
+                pb.set_prefix(prefix.clone());
+                pb
+            };
             progress_bar = Some(pb);
         }
 
@@ -212,8 +228,15 @@ pub async fn download_file(
         }
 
         if !silent && let Some(pb) = &progress_bar {
-            pb.finish_with_message(format!("✓ {}B", pb.position()));
-            println!();
+            if reuse_bar.is_some() {
+                // Caller owns the bar and will reset it for the next file.
+                // Leave it at its final position with a tick so the slot
+                // briefly shows completion before being reassigned.
+                pb.set_message(format!("✓ {}B", pb.position()));
+            } else {
+                pb.finish_with_message(format!("✓ {}B", pb.position()));
+                println!();
+            }
         }
 
         file.as_file_mut()
@@ -281,6 +304,31 @@ pub fn escape_like(s: &str) -> String {
         out.push(c);
     }
     out
+}
+
+/// Build a multi-row `INSERT … VALUES (?,?,…),(?,?,…),…` clause.
+/// `prefix` must end with `"VALUES "` (with the trailing space).
+/// Used by the bulk loaders to amortize statement parse/plan cost across many rows.
+#[must_use]
+pub fn build_insert_sql(prefix: &str, rows: usize, cols: usize) -> String {
+    debug_assert!(rows > 0 && cols > 0);
+    let tuple_len = 2 + cols * 2;
+    let mut sql = String::with_capacity(prefix.len() + rows * tuple_len);
+    sql.push_str(prefix);
+    for r in 0..rows {
+        if r > 0 {
+            sql.push(',');
+        }
+        sql.push('(');
+        for c in 0..cols {
+            if c > 0 {
+                sql.push(',');
+            }
+            sql.push('?');
+        }
+        sql.push(')');
+    }
+    sql
 }
 
 pub fn p(s: &str, newline: bool) {

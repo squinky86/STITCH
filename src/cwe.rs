@@ -1,13 +1,13 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-use crate::common::{Args, download_file, extract_from_zip, p};
+use crate::common::{Args, build_insert_sql, download_file, extract_from_zip, p};
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use quick_xml::Reader;
 use quick_xml::events::Event;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, params_from_iter, types::Value};
 use tempfile::NamedTempFile;
 use tokio::fs;
 
@@ -44,6 +44,7 @@ pub async fn process_cwe(conn: &Connection, args: &Args) -> Result<()> {
         false,
         "Downloading CWE XML file from MITRE…".to_string(),
         args,
+        None,
     )
     .await?;
 
@@ -255,6 +256,12 @@ pub fn parse_cwe_xml(
     Ok((cwe_entries, relationships))
 }
 
+// Chunk sizes chosen to stay well under SQLite's default 32766 host-parameter
+// limit while keeping the per-statement parse/plan cost amortized over many
+// rows. 1000 weakness rows = 10000 params; 2000 relationship rows = 8000 params.
+const WEAKNESS_BATCH: usize = 1000;
+const RELATIONSHIP_BATCH: usize = 2000;
+
 fn cwe_insert_data_to_database(
     conn: &Connection,
     entries: &[Weakness],
@@ -262,38 +269,39 @@ fn cwe_insert_data_to_database(
 ) -> Result<()> {
     // Insert CWE entries
     let bar = ProgressBar::new(entries.len() as u64);
-    let mut on: u32 = 0;
     bar.set_style(
         ProgressStyle::default_bar()
             .template("{prefix} {bar:20.cyan/blue} {msg}")
             .expect("Failed to create progress style"),
     );
     bar.set_prefix("Inserting CWEs…");
-    bar.set_message(format!("{}/{}", on, entries.len()));
+    bar.set_message(format!("0/{}", entries.len()));
     let mut tx = conn.unchecked_transaction()?;
     {
-        let mut stmt = tx.prepare_cached(
-			"INSERT OR REPLACE INTO Weakness 
-             (id, name, abstraction, description, extended_description, category, view, confidentiality, integrity, availability) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-		)?;
-
-        for entry in entries {
-            on += 1;
-            bar.set_message(format!("{}/{}", on, entries.len()));
-            bar.inc(1);
-            stmt.execute(params![
-                entry.id,
-                entry.name,
-                entry.abstraction,
-                entry.description,
-                entry.extended_description,
-                entry.category,
-                entry.view,
-                entry.confidentiality,
-                entry.integrity,
-                entry.availability
-            ])?;
+        for chunk in entries.chunks(WEAKNESS_BATCH) {
+            let sql = build_insert_sql(
+                "INSERT OR REPLACE INTO Weakness \
+                 (id, name, abstraction, description, extended_description, \
+                  category, view, confidentiality, integrity, availability) VALUES ",
+                chunk.len(),
+                10,
+            );
+            let mut values: Vec<Value> = Vec::with_capacity(chunk.len() * 10);
+            for entry in chunk {
+                values.push(Value::Integer(i64::from(entry.id)));
+                values.push(Value::Text(entry.name.clone()));
+                values.push(Value::Text(entry.abstraction.clone()));
+                values.push(Value::Text(entry.description.clone()));
+                values.push(Value::Text(entry.extended_description.clone()));
+                values.push(Value::Integer(i64::from(entry.category)));
+                values.push(Value::Integer(i64::from(entry.view)));
+                values.push(Value::Integer(i64::from(entry.confidentiality)));
+                values.push(Value::Integer(i64::from(entry.integrity)));
+                values.push(Value::Integer(i64::from(entry.availability)));
+            }
+            tx.execute(&sql, params_from_iter(values.iter()))?;
+            bar.inc(chunk.len() as u64);
+            bar.set_message(format!("{}/{}", bar.position(), entries.len()));
         }
     }
     tx.commit()?;
@@ -302,32 +310,32 @@ fn cwe_insert_data_to_database(
 
     // Insert relationships
     let bar2 = ProgressBar::new(relationships.len() as u64);
-    on = 0;
     bar2.set_style(
         ProgressStyle::default_bar()
             .template("{prefix} {bar:20.cyan/blue} {msg}")
             .expect("Failed to create progress style"),
     );
     bar2.set_prefix("Inserting CWE Relationships…");
-    bar2.set_message(format!("{}/{}", on, relationships.len()));
+    bar2.set_message(format!("0/{}", relationships.len()));
     tx = conn.unchecked_transaction()?;
     {
-        let mut stmt = tx.prepare_cached(
-            "INSERT OR IGNORE INTO WeaknessRelationship 
-             (source_id, target_id, nature, view_id) 
-             VALUES (?1, ?2, ?3, ?4)",
-        )?;
-
-        for rel in relationships {
-            on += 1;
-            bar2.set_message(format!("{}/{}", on, relationships.len()));
-            bar2.inc(1);
-            stmt.execute(params![
-                rel.source_id,
-                rel.target_id,
-                rel.nature,
-                rel.view_id
-            ])?;
+        for chunk in relationships.chunks(RELATIONSHIP_BATCH) {
+            let sql = build_insert_sql(
+                "INSERT OR IGNORE INTO WeaknessRelationship \
+                 (source_id, target_id, nature, view_id) VALUES ",
+                chunk.len(),
+                4,
+            );
+            let mut values: Vec<Value> = Vec::with_capacity(chunk.len() * 4);
+            for rel in chunk {
+                values.push(Value::Integer(i64::from(rel.source_id)));
+                values.push(Value::Integer(i64::from(rel.target_id)));
+                values.push(Value::Text(rel.nature.clone()));
+                values.push(Value::Integer(i64::from(rel.view_id)));
+            }
+            tx.execute(&sql, params_from_iter(values.iter()))?;
+            bar2.inc(chunk.len() as u64);
+            bar2.set_message(format!("{}/{}", bar2.position(), relationships.len()));
         }
     }
     tx.commit()?;
@@ -336,6 +344,7 @@ fn cwe_insert_data_to_database(
 
     Ok(())
 }
+
 
 #[cfg(test)]
 mod tests {

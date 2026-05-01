@@ -324,6 +324,7 @@ pub async fn process_stig(conn: &Connection, args: &Args) -> Result<()> {
         false,
         "Downloading STIG XML file from DISA…".to_string(),
         args,
+        None,
     )
     .await?;
 

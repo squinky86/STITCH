@@ -43,6 +43,7 @@ pub async fn process_stigwe(conn: &Connection, args: &Args) -> Result<()> {
         false,
         "Downloading STIGWE YAML file…".to_string(),
         args,
+        None,
     )
     .await?;
 

@@ -1,12 +1,16 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-use crate::common::{Args, decompress_gzip, download_file, p};
+use crate::common::{Args, build_insert_sql, decompress_gzip, download_file, p};
 
 use anyhow::{Context, Result};
 use chrono::{Datelike, Utc};
-use indicatif::{ProgressBar, ProgressStyle};
-use rusqlite::{Connection, params};
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+use rusqlite::{Connection, params_from_iter, types::Value};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+use tokio::sync::mpsc;
 use serde::Deserialize;
 use tempfile::NamedTempFile;
 use tokio::fs;
@@ -402,41 +406,130 @@ pub fn apply_v2_to_v4(cvss_v4: &mut CvssDataV40, v2: &CvssMetricV2) {
     }
 }
 
+/// Cap on simultaneous NVD downloads. NVD does rate-limit, so this stays
+/// modest; bandwidth is the dominant factor anyway.
+const NVD_DOWNLOAD_CONCURRENCY: usize = 4;
+
 pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
-    // NVD Data
+    // Slot model: exactly NVD_DOWNLOAD_CONCURRENCY + 1 progress bars exist
+    // for the duration of this step. The first N are persistent "download
+    // slots" — N worker tasks each own one slot bar and reuse it across
+    // every year they download. The last bar is the overall sequential
+    // processor that increments as downloaded years are inserted.
+    //
+    // Workers pull years off a shared atomic counter (cheaper than a mutex
+    // around a queue when items are just integers and there's no fairness
+    // requirement). Completed downloads are sent over a bounded mpsc channel
+    // to the consumer running on the main task — Connection is !Send so the
+    // consumer must stay here.
     p("Obtaining and parsing NVD data:", true);
-    let current_datetime = Utc::now();
-    for year in 2002..=current_datetime.year() {
-        p(
-            format!("\tProcessing NVD data for year {year}:")
-                .to_string()
-                .as_ref(),
-            true,
-        );
-        let mut nvd_temp_json_gz = NamedTempFile::new()?;
-        let mut nvd_temp_json = NamedTempFile::new()?;
-        let nvd_url = format!("https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-{year}.json.gz");
-        download_file(
-            &nvd_url,
-            &mut nvd_temp_json_gz,
-            false,
-            format!("\t\tDownloading {year} NVD JSON…"),
-            args,
-        )
-        .await?;
+    let current_year = Utc::now().year();
+    let years: Vec<i32> = (2002..=current_year).collect();
+    let total_years = years.len();
 
-        p(
-            format!("\t\tDeflating {year} NVD JSON…")
-                .to_string()
-                .as_ref(),
-            false,
-        );
-        decompress_gzip(&nvd_temp_json_gz, &mut nvd_temp_json).await?;
-        p("✓", true);
+    // Cap redraws so the per-chunk byte updates don't flood scrollback.
+    let mp = MultiProgress::with_draw_target(ProgressDrawTarget::stderr_with_hz(4));
 
-        nvd_parse_and_populate_database(&nvd_temp_json, year, conn).await?;
+    let bar_style = ProgressStyle::default_bar()
+        .template("{prefix} {bar:20.cyan/blue} {msg}")
+        .expect("Failed to create progress style");
+
+    // Pre-create the N slot bars FIRST so they occupy the top of the layout.
+    // Each starts in an idle state; the worker that owns it will set the
+    // length/prefix on its first download.
+    let slot_bars: Vec<ProgressBar> = (0..NVD_DOWNLOAD_CONCURRENCY)
+        .map(|_| {
+            let pb = mp.add(ProgressBar::new(0));
+            pb.set_style(bar_style.clone());
+            pb.set_prefix("\t(idle)");
+            pb.set_message("waiting…");
+            pb
+        })
+        .collect();
+
+    // The overall processing bar sits at the bottom of the layout.
+    let proc_bar = mp.add(ProgressBar::new(total_years as u64));
+    proc_bar.set_style(bar_style);
+    proc_bar.set_prefix("Processing NVD years…");
+    proc_bar.set_message(format!("0/{total_years}"));
+    proc_bar.enable_steady_tick(Duration::from_millis(250));
+
+    // Shared work dispatch: an atomic index into the years vec.
+    let years = Arc::new(years);
+    let next_year = Arc::new(AtomicUsize::new(0));
+    let args_arc = Arc::new(args.clone());
+
+    // Bounded so a fast network can't run the consumer out of disk: peak
+    // gz holdings ≈ N (one per worker mid-download) + channel capacity.
+    let (tx, mut rx) =
+        mpsc::channel::<Result<(i32, NamedTempFile)>>(NVD_DOWNLOAD_CONCURRENCY);
+
+    // Spawn one worker per slot. Each worker owns its slot bar for its
+    // entire lifetime, draining the year queue and reusing the bar.
+    for slot_bar in slot_bars {
+        let years = years.clone();
+        let next_year = next_year.clone();
+        let tx = tx.clone();
+        let args = args_arc.clone();
+        tokio::spawn(async move {
+            loop {
+                let idx = next_year.fetch_add(1, Ordering::Relaxed);
+                if idx >= years.len() {
+                    // No work left; freeze the slot in a clean state but
+                    // leave it on screen so the layout stays stable.
+                    slot_bar.set_prefix("\t(done)");
+                    slot_bar.set_message(String::new());
+                    slot_bar.set_length(0);
+                    slot_bar.set_position(0);
+                    break;
+                }
+                let year = years[idx];
+                let result: Result<(i32, NamedTempFile)> = async {
+                    let mut gz_file = NamedTempFile::new()?;
+                    let url = format!(
+                        "https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-{year}.json.gz"
+                    );
+                    download_file(
+                        &url,
+                        &mut gz_file,
+                        false,
+                        format!("\tDownloading {year} NVD JSON…"),
+                        &args,
+                        Some(&slot_bar),
+                    )
+                    .await?;
+                    Ok((year, gz_file))
+                }
+                .await;
+                if tx.send(result).await.is_err() {
+                    // Consumer dropped rx — typically because of an earlier
+                    // error elsewhere. Stop pulling new years.
+                    break;
+                }
+            }
+        });
+    }
+    // Drop our handle so the channel closes once every worker exits.
+    drop(tx);
+
+    // Consumer: one year at a time, in completion order.
+    let mut completed: u64 = 0;
+    while let Some(item) = rx.recv().await {
+        let (year, gz_file) = item?;
+        let mut json_file = NamedTempFile::new()?;
+        decompress_gzip(&gz_file, &mut json_file).await?;
+        // Free the gz immediately — only the decompressed JSON matters now.
+        drop(gz_file);
+        nvd_parse_and_populate_database(&json_file, year, conn).await?;
+        completed += 1;
+        proc_bar.set_position(completed);
+        proc_bar.set_message(format!("{completed}/{total_years} (last: {year})"));
     }
 
+    proc_bar.finish_with_message(format!("✓ ({total_years} years)"));
+    // MultiProgress is about to drop; one newline so subsequent stdout
+    // doesn't share a line with the final bar render.
+    println!();
     Ok(())
 }
 
@@ -451,105 +544,97 @@ async fn nvd_parse_and_populate_database(
 
     let feed: NvdCveFeed = serde_json::from_str(&json_content)
         .context(format!("Failed to parse NVD JSON for year {year}"))?;
-
-    #[allow(clippy::cast_sign_loss)]
-    let bar = ProgressBar::new(feed.total_results as u64);
-    let mut on: u32 = 0;
-    bar.set_style(
-        ProgressStyle::default_bar()
-            .template("{prefix} {bar:20.cyan/blue} {msg}")
-            .expect("Failed to create progress style"),
-    );
-    bar.set_prefix(format!("\t\tProcessing {year} JSON…"));
-    bar.set_message(format!("{}/{}", on, feed.total_results));
     let tx = conn.unchecked_transaction()?;
     {
-        let mut stmt = tx.prepare_cached(
-            "INSERT INTO Vulnerability (
-				NVDId,
-				Description,
-				attackVector,
-				attackComplexity,
-				attackRequirements,
-				privilegesRequired,
-				userInteraction,
-				vulnConfidentialityImpact,
-				vulnIntegrityImpact,
-				vulnAvailabilityImpact,
-				subConfidentialityImpact,
-				subIntegrityImpact,
-				subAvailabilityImpact,
-				exploitMaturity,
-				confidentialityRequirement,
-				integrityRequirement,
-				availabilityRequirement,
-				modifiedAttackVector,
-				modifiedAttackComplexity,
-				modifiedAttackRequirements,
-				modifiedPrivilegesRequired,
-				modifiedUserInteraction,
-				modifiedVulnConfidentialityImpact,
-				modifiedVulnIntegrityImpact,
-				modifiedVulnAvailabilityImpact,
-				modifiedSubConfidentialityImpact,
-				modifiedSubIntegrityImpact,
-				modifiedSubAvailabilityImpact,
-				safety,
-				automatable,
-				providerUrgency,
-				recovery,
-				valueDensity,
-				vulnerabilityResponseEffort,
-				scoreVersion
-			) VALUES (
-				?1,
-				?2,
-				?3,
-				?4,
-				?5,
-				?6,
-				?7,
-				?8,
-				?9,
-				?10,
-				?11,
-				?12,
-				?13,
-				?14,
-				?15,
-				?16,
-				?17,
-				?18,
-				?19,
-				?20,
-				?21,
-				?22,
-				?23,
-				?24,
-				?25,
-				?26,
-				?27,
-				?28,
-				?29,
-				?30,
-				?31,
-				?32,
-				?33,
-				?34,
-				?35
-			)",
-        )?;
+        // Resolve each row's CVSS metrics + child CWE list up-front, then flush
+        // in chunks. 35 columns × 500 rows = 17500 host params, well under
+        // SQLite's default 32766 limit. Multi-row INSERT amortizes parse/plan
+        // cost vs. row-at-a-time execute().
+        const VULN_BATCH: usize = 500;
+        const VULN_COLS: usize = 35;
+        const MAP_BATCH: usize = 5000;
+        const MAP_COLS: usize = 3;
 
-        let mut stmt2 = tx.prepare_cached(
-            "INSERT INTO MapVulnerabilityWeakness (VulnerabilityId, WeaknessId, `Primary`) VALUES (?1, ?2, ?3)",
-        )?;
+        let vuln_prefix = "INSERT INTO Vulnerability (\
+            NVDId,Description,attackVector,attackComplexity,attackRequirements,\
+            privilegesRequired,userInteraction,vulnConfidentialityImpact,\
+            vulnIntegrityImpact,vulnAvailabilityImpact,subConfidentialityImpact,\
+            subIntegrityImpact,subAvailabilityImpact,exploitMaturity,\
+            confidentialityRequirement,integrityRequirement,availabilityRequirement,\
+            modifiedAttackVector,modifiedAttackComplexity,modifiedAttackRequirements,\
+            modifiedPrivilegesRequired,modifiedUserInteraction,\
+            modifiedVulnConfidentialityImpact,modifiedVulnIntegrityImpact,\
+            modifiedVulnAvailabilityImpact,modifiedSubConfidentialityImpact,\
+            modifiedSubIntegrityImpact,modifiedSubAvailabilityImpact,\
+            safety,automatable,providerUrgency,recovery,valueDensity,\
+            vulnerabilityResponseEffort,scoreVersion) VALUES ";
+        let map_prefix =
+            "INSERT INTO MapVulnerabilityWeakness (VulnerabilityId, WeaknessId, `Primary`) VALUES ";
+
+        // Pre-build the full-batch SQL once; the trailing partial chunk gets
+        // its own SQL string.
+        let full_vuln_sql = build_insert_sql(vuln_prefix, VULN_BATCH, VULN_COLS);
+
+        // Per-vuln pending child rows: (cwe_id, primary). The vulnerability
+        // rowid is unknown until after the parent multi-row INSERT runs and
+        // last_insert_rowid() reports the highest assigned id.
+        struct Pending {
+            children: Vec<(i32, bool)>,
+        }
+        let mut buf_values: Vec<Value> = Vec::with_capacity(VULN_BATCH * VULN_COLS);
+        let mut pending: Vec<Pending> = Vec::with_capacity(VULN_BATCH);
+        let mut map_values: Vec<Value> = Vec::with_capacity(MAP_BATCH * MAP_COLS);
+
+        // Flushes the parent batch, then the (now-resolvable) child batch.
+        // Declared as a closure-like inline section via a helper macro would
+        // be cleaner, but the borrow checker is happier with an explicit fn-
+        // style block we re-enter at end-of-loop and final-flush.
+        let flush_vulns = |tx: &rusqlite::Transaction<'_>,
+                           buf_values: &mut Vec<Value>,
+                           pending: &mut Vec<Pending>,
+                           map_values: &mut Vec<Value>,
+                           full_sql: &str|
+         -> Result<()> {
+            if pending.is_empty() {
+                return Ok(());
+            }
+            let n = pending.len();
+            let sql_storage;
+            let sql: &str = if n == VULN_BATCH {
+                full_sql
+            } else {
+                sql_storage = build_insert_sql(vuln_prefix, n, VULN_COLS);
+                &sql_storage
+            };
+            tx.execute(sql, params_from_iter(buf_values.iter()))?;
+            let last_id = tx.last_insert_rowid();
+            // SQLite assigns sequential rowids within a single multi-row INSERT
+            // when no explicit id is provided and AUTOINCREMENT is in effect.
+            #[allow(clippy::cast_possible_wrap)]
+            let first_id = last_id - (n as i64) + 1;
+
+            for (offset, p) in pending.drain(..).enumerate() {
+                #[allow(clippy::cast_possible_wrap)]
+                let vuln_id = first_id + offset as i64;
+                for (cwe_id, is_primary) in p.children {
+                    map_values.push(Value::Integer(vuln_id));
+                    map_values.push(Value::Integer(i64::from(cwe_id)));
+                    map_values.push(Value::Integer(i64::from(is_primary)));
+                    if map_values.len() >= MAP_BATCH * MAP_COLS {
+                        let rows = map_values.len() / MAP_COLS;
+                        let map_sql = build_insert_sql(map_prefix, rows, MAP_COLS);
+                        tx.execute(&map_sql, params_from_iter(map_values.iter()))?;
+                        map_values.clear();
+                    }
+                }
+            }
+            buf_values.clear();
+            Ok(())
+        };
 
         for v in feed.vulnerabilities {
-            on += 1;
-            bar.set_message(format!("{}/{}", on, feed.total_results));
             let cve = &v.cve;
 
-            //store cvss data to insert into database
             let mut cvss_v4 = CvssDataV40::new();
             let mut score_version: u32 = 0;
 
@@ -608,44 +693,43 @@ async fn nvd_parse_and_populate_database(
                 .find(|d| d.lang == "en")
                 .map_or("No description found.", |d| d.value.as_str());
 
-            stmt.execute(params![
-                cve.id,
-                description,
-                cvss_v4.attack_vector,
-                cvss_v4.attack_complexity,
-                cvss_v4.attack_requirements,
-                cvss_v4.privileges_required,
-                cvss_v4.user_interaction,
-                cvss_v4.vuln_confidentiality_impact,
-                cvss_v4.vuln_integrity_impact,
-                cvss_v4.vuln_availability_impact,
-                cvss_v4.sub_confidentiality_impact,
-                cvss_v4.sub_integrity_impact,
-                cvss_v4.sub_availability_impact,
-                cvss_v4.exploit_maturity,
-                cvss_v4.confidentiality_requirement,
-                cvss_v4.integrity_requirement,
-                cvss_v4.availability_requirement,
-                cvss_v4.modified_attack_vector,
-                cvss_v4.modified_attack_complexity,
-                cvss_v4.modified_attack_requirements,
-                cvss_v4.modified_privileges_required,
-                cvss_v4.modified_user_interaction,
-                cvss_v4.modified_vuln_confidentiality_impact,
-                cvss_v4.modified_vuln_integrity_impact,
-                cvss_v4.modified_vuln_availability_impact,
-                cvss_v4.modified_sub_confidentiality_impact,
-                cvss_v4.modified_sub_integrity_impact,
-                cvss_v4.modified_sub_availability_impact,
-                cvss_v4.safety,
-                cvss_v4.automatable,
-                cvss_v4.provider_urgency,
-                cvss_v4.recovery,
-                cvss_v4.value_density,
-                cvss_v4.vulnerability_response_effort,
-                score_version
-            ])?;
-            let vuln_id = tx.last_insert_rowid();
+            buf_values.push(Value::Text(cve.id.clone()));
+            buf_values.push(Value::Text(description.to_string()));
+            buf_values.push(Value::Text(cvss_v4.attack_vector));
+            buf_values.push(Value::Text(cvss_v4.attack_complexity));
+            buf_values.push(Value::Text(cvss_v4.attack_requirements));
+            buf_values.push(Value::Text(cvss_v4.privileges_required));
+            buf_values.push(Value::Text(cvss_v4.user_interaction));
+            buf_values.push(Value::Text(cvss_v4.vuln_confidentiality_impact));
+            buf_values.push(Value::Text(cvss_v4.vuln_integrity_impact));
+            buf_values.push(Value::Text(cvss_v4.vuln_availability_impact));
+            buf_values.push(Value::Text(cvss_v4.sub_confidentiality_impact));
+            buf_values.push(Value::Text(cvss_v4.sub_integrity_impact));
+            buf_values.push(Value::Text(cvss_v4.sub_availability_impact));
+            buf_values.push(Value::Text(cvss_v4.exploit_maturity));
+            buf_values.push(Value::Text(cvss_v4.confidentiality_requirement));
+            buf_values.push(Value::Text(cvss_v4.integrity_requirement));
+            buf_values.push(Value::Text(cvss_v4.availability_requirement));
+            buf_values.push(Value::Text(cvss_v4.modified_attack_vector));
+            buf_values.push(Value::Text(cvss_v4.modified_attack_complexity));
+            buf_values.push(Value::Text(cvss_v4.modified_attack_requirements));
+            buf_values.push(Value::Text(cvss_v4.modified_privileges_required));
+            buf_values.push(Value::Text(cvss_v4.modified_user_interaction));
+            buf_values.push(Value::Text(cvss_v4.modified_vuln_confidentiality_impact));
+            buf_values.push(Value::Text(cvss_v4.modified_vuln_integrity_impact));
+            buf_values.push(Value::Text(cvss_v4.modified_vuln_availability_impact));
+            buf_values.push(Value::Text(cvss_v4.modified_sub_confidentiality_impact));
+            buf_values.push(Value::Text(cvss_v4.modified_sub_integrity_impact));
+            buf_values.push(Value::Text(cvss_v4.modified_sub_availability_impact));
+            buf_values.push(Value::Text(cvss_v4.safety));
+            buf_values.push(Value::Text(cvss_v4.automatable));
+            buf_values.push(Value::Text(cvss_v4.provider_urgency));
+            buf_values.push(Value::Text(cvss_v4.recovery));
+            buf_values.push(Value::Text(cvss_v4.value_density));
+            buf_values.push(Value::Text(cvss_v4.vulnerability_response_effort));
+            buf_values.push(Value::Integer(i64::from(score_version)));
+
+            let mut children: Vec<(i32, bool)> = Vec::new();
             let mut inserted: Vec<i32> = Vec::new();
             if let Some(weaknesses) = &cve.weaknesses {
                 for weakness in weaknesses {
@@ -658,25 +742,40 @@ async fn nvd_parse_and_populate_database(
                             description.value.trim_start_matches("CWE-").parse::<i32>()
                             && !inserted.contains(&tmp_weakness)
                         {
-                            stmt2.execute(params![
-                                vuln_id,
-                                tmp_weakness,
-                                weakness.type_ == "Primary"
-                            ])?;
+                            children.push((tmp_weakness, weakness.type_ == "Primary"));
                             inserted.push(tmp_weakness);
                         }
                     }
                 }
             }
+            pending.push(Pending { children });
 
-            bar.inc(1);
+            if pending.len() >= VULN_BATCH {
+                flush_vulns(
+                    &tx,
+                    &mut buf_values,
+                    &mut pending,
+                    &mut map_values,
+                    &full_vuln_sql,
+                )?;
+            }
+        }
+
+        flush_vulns(
+            &tx,
+            &mut buf_values,
+            &mut pending,
+            &mut map_values,
+            &full_vuln_sql,
+        )?;
+        if !map_values.is_empty() {
+            let rows = map_values.len() / MAP_COLS;
+            let map_sql = build_insert_sql(map_prefix, rows, MAP_COLS);
+            tx.execute(&map_sql, params_from_iter(map_values.iter()))?;
         }
     }
 
     tx.commit()?;
-    bar.finish_with_message(format!("✓ ({})", feed.total_results));
-    println!();
-
     Ok(())
 }
 

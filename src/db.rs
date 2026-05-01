@@ -38,8 +38,20 @@ pub fn create_database(db_path: &str) -> Result<Connection> {
 /// Applies the full STITCH schema (tables, FKs, pragmas) to an open Connection.
 /// Used by `create_database` and by tests that want an in-memory DB.
 pub fn apply_schema(conn: &Connection) -> Result<()> {
-    // Enable foreign key constraints
-    conn.execute("PRAGMA foreign_keys = ON", [])?;
+    // Enable foreign key constraints and tune SQLite for bulk-load throughput.
+    // WAL + synchronous=NORMAL is durable across application crashes (only at
+    // risk on OS crash / power loss) and dramatically reduces fsyncs during the
+    // multi-million-row NVD ingest. cache_size is in KiB when negative, so
+    // -65536 = 64 MiB. mmap_size enables memory-mapped reads up to 256 MiB.
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON;
+         PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA cache_size = -65536;
+         PRAGMA temp_store = MEMORY;
+         PRAGMA mmap_size = 268435456;",
+    )
+    .context("Failed to apply SQLite pragmas")?;
 
     // Create CWE Weakness table
     conn.execute(
@@ -230,6 +242,18 @@ FOREIGN KEY(WeaknessId) REFERENCES Weakness(id)
         [],
     )
     .context("Failed to create MapNVDWeakness table")?;
+
+    // Indexes for stitch-score query patterns. The existing UNIQUE/PRIMARY KEY
+    // constraints index the leftmost columns; these cover the reverse-direction
+    // and non-leading-column lookups that scoring performs in tight loops.
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_wr_target_view ON WeaknessRelationship(target_id, view_id);
+         CREATE INDEX IF NOT EXISTS idx_wr_source_view ON WeaknessRelationship(source_id, view_id);
+         CREATE INDEX IF NOT EXISTS idx_mvw_weakness ON MapVulnerabilityWeakness(WeaknessId);
+         CREATE INDEX IF NOT EXISTS idx_mscc_cci ON MapSTIGCheckCCI(CCIId);
+         CREATE INDEX IF NOT EXISTS idx_stigcheck_cwe ON STIGCheck(CWEId);",
+    )
+    .context("Failed to create query indexes")?;
 
     Ok(())
 }

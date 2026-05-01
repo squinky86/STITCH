@@ -45,6 +45,7 @@ pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
         false,
         "Downloading CCI XML file from DISA…".to_string(),
         args,
+        None,
     )
     .await?;
 
