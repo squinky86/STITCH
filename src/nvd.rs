@@ -424,7 +424,7 @@ pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
     // consumer must stay here.
     p("Obtaining and parsing NVD data:", true);
     let current_year = Utc::now().year();
-    let years: Vec<i32> = (2002..=current_year).collect();
+    let years: Vec<i32> = (2002..=current_year).rev().collect();
     let total_years = years.len();
 
     // Cap redraws so the per-chunk byte updates don't flood scrollback.

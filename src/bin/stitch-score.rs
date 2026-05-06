@@ -574,7 +574,7 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
             "classification": null
         },
         "cklb_version": "1.0",
-        "cklb_generator": "STITCH 0.1.0"
+        "cklb_generator": "STITCH 0.1.1"
     });
 
     println!("{}", serde_json::to_string_pretty(&json)?);

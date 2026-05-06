@@ -16,7 +16,7 @@ use stitch::stigwe::process_stigwe;
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    println!("STITCH Database Builder v0.1.0");
+    println!("STITCH Database Builder v0.1.1");
     println!("Copyright © 2025-2026 Jon Hood");
 
     // DB Structure

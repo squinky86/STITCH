@@ -94,8 +94,20 @@ pub async fn download_file(
 
     let mut retries = 0;
     loop {
-        // Reset the temp file before each attempt so partial writes don't accumulate.
-        if retries > 0 {
+        let current_size = file.as_file().metadata().map(|m| m.len()).unwrap_or(0);
+        let mut req = client.get(url);
+
+        if retries > 0 && current_size > 0 {
+            req = req.header(reqwest::header::RANGE, format!("bytes={current_size}-"));
+            if args.verbose {
+                p(format!("Resuming download from byte {current_size}").as_str(), true);
+            }
+            // Ensure the file cursor is at the end so we append.
+            file.as_file_mut()
+                .seek(SeekFrom::End(0))
+                .context("Failed to seek temp file to end for resume")?;
+        } else {
+            // Reset the temp file before attempt so partial writes don't accumulate.
             file.as_file_mut()
                 .set_len(0)
                 .context("Failed to truncate temp file for retry")?;
@@ -104,9 +116,19 @@ pub async fn download_file(
                 .context("Failed to seek temp file for retry")?;
         }
 
-        let response = match client.get(url).send().await {
+        let response = match req.send().await {
             Ok(res) => {
                 let status = res.status();
+                if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+                    retries += 1;
+                    if retries < MAX_RETRIES {
+                        file.as_file_mut().set_len(0).unwrap_or(());
+                        continue;
+                    }
+                    return Err(anyhow::anyhow!(
+                        "Failed to download {url}: Server rejected range request."
+                    ));
+                }
                 // Retry transient failures (5xx, 408, 429); fail fast on other 4xx
                 // so a 404/410 doesn't get its HTML body written into the temp file
                 // and parsed as XML/JSON later.
@@ -150,7 +172,21 @@ pub async fn download_file(
             }
         };
 
-        let total_size = response.content_length().unwrap_or(0);
+        let content_length = response.content_length().unwrap_or(0);
+        let mut current_offset = current_size;
+        let total_size = if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+            current_offset + content_length
+        } else {
+            current_offset = 0;
+            file.as_file_mut()
+                .set_len(0)
+                .context("Failed to truncate temp file on 200 OK")?;
+            file.as_file_mut()
+                .seek(SeekFrom::Start(0))
+                .context("Failed to seek temp file on 200 OK")?;
+            content_length
+        };
+
         if args.verbose && total_size > 0 {
             p(format!("File size: {total_size} bytes").as_str(), true);
         }
@@ -162,7 +198,11 @@ pub async fn download_file(
                 existing.set_prefix(prefix.clone());
                 existing.set_length(total_size);
                 existing.set_message(String::new());
-                existing.reset();
+                if current_offset == 0 {
+                    existing.reset();
+                } else {
+                    existing.set_position(current_offset);
+                }
                 existing.clone()
             } else {
                 let pb = ProgressBar::new(total_size);
@@ -173,13 +213,14 @@ pub async fn download_file(
                         .expect("Failed to create progress style"),
                 );
                 pb.set_prefix(prefix.clone());
+                pb.set_position(current_offset);
                 pb
             };
             progress_bar = Some(pb);
         }
 
         let mut stream = response.bytes_stream();
-        let mut downloaded: u64 = 0;
+        let mut downloaded: u64 = current_offset;
         let mut chunk_err: Option<anyhow::Error> = None;
         while let Some(chunk) = stream.next().await {
             match chunk {
