@@ -345,7 +345,6 @@ fn cwe_insert_data_to_database(
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

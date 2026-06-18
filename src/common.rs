@@ -100,7 +100,10 @@ pub async fn download_file(
         if retries > 0 && current_size > 0 {
             req = req.header(reqwest::header::RANGE, format!("bytes={current_size}-"));
             if args.verbose {
-                p(format!("Resuming download from byte {current_size}").as_str(), true);
+                p(
+                    format!("Resuming download from byte {current_size}").as_str(),
+                    true,
+                );
             }
             // Ensure the file cursor is at the end so we append.
             file.as_file_mut()

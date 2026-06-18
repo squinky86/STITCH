@@ -7,13 +7,13 @@ use anyhow::{Context, Result};
 use chrono::{Datelike, Utc};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rusqlite::{Connection, params_from_iter, types::Value};
+use serde::Deserialize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use tokio::sync::mpsc;
-use serde::Deserialize;
 use tempfile::NamedTempFile;
 use tokio::fs;
+use tokio::sync::mpsc;
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
@@ -461,8 +461,7 @@ pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
 
     // Bounded so a fast network can't run the consumer out of disk: peak
     // gz holdings ≈ N (one per worker mid-download) + channel capacity.
-    let (tx, mut rx) =
-        mpsc::channel::<Result<(i32, NamedTempFile)>>(NVD_DOWNLOAD_CONCURRENCY);
+    let (tx, mut rx) = mpsc::channel::<Result<(i32, NamedTempFile)>>(NVD_DOWNLOAD_CONCURRENCY);
 
     // Spawn one worker per slot. Each worker owns its slot bar for its
     // entire lifetime, draining the year queue and reusing the bar.
