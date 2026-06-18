@@ -251,7 +251,7 @@ STITCH includes associating scores against the Application Security and Developm
 
 * Forum of Incident Response and Security Teams, Inc. (FIRST). [CVSS Specification](https://www.first.org/cvss/v4.0/specification-document) V4.0.
 * Hood, Jon. [STIG Weakness Enumerations (STIGWE)](https://www.github.com/squinky86/STIGWE).
-* MITRE Corporation. [Common Weakness Enumeration (CWE)](https://cwe.mitre.org/) V4.19.
+* MITRE Corporation. [Common Weakness Enumeration (CWE)](https://cwe.mitre.org/) V4.20.
 * National Institute of Standards and Technology (NIST). [National Vulnerability Database (NVD)](https://nvd.nist.gov/).
 * National Institute of Standards and Technology. "Security and Privacy Controls for Information Systems and Organizations." Computer Security Resource Center, Special Publication 800-53, Revision 5, Update 1, U.S. Department of Commerce, 15 Sept. 2020, [https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final](https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final).
 * U.S. Department of Defense. [DoD Cyber Exchange](https://public.cyber.mil/).
