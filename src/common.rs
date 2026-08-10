@@ -239,7 +239,7 @@ pub async fn download_file(
                         .context("Failed to write chunk to file")?;
                     if !silent && let Some(pb) = &progress_bar {
                         pb.inc(bytes.len() as u64);
-                        pb.set_message(format!("{}/{}B", pb.position(), &total_size));
+                        pb.set_message(format!("{}/{}B", pb.position(), total_size));
                     }
                 }
                 Err(e) => {
