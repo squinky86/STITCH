@@ -1,37 +1,213 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-use crate::common::p;
+use crate::common::{DownloadMetadata, p};
 
-use anyhow::{Context, Result};
-use rusqlite::Connection;
+use anyhow::{Context, Result, bail};
+use chrono::Utc;
+use rusqlite::{Connection, OpenFlags, config::DbConfig, params};
+use std::path::{Path, PathBuf};
+use tempfile::NamedTempFile;
 
-pub fn create_database(db_path: &str) -> Result<Connection> {
+const DATABASE_SCHEMA_VERSION: i64 = 1;
+
+pub struct DatabaseBuild {
+    conn: Option<Connection>,
+    temp_file: Option<NamedTempFile>,
+    destination: PathBuf,
+}
+
+impl DatabaseBuild {
+    pub fn connection(&self) -> &Connection {
+        self.conn
+            .as_ref()
+            .expect("database build connection is available until publication")
+    }
+
+    pub fn publish(mut self) -> Result<()> {
+        let conn = self
+            .conn
+            .take()
+            .context("Database build was already published")?;
+
+        let integrity: String = conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .context("Failed to run SQLite integrity check")?;
+        if integrity != "ok" {
+            bail!("Refusing to publish corrupt database: {integrity}");
+        }
+
+        let foreign_key_error: Option<(String, i64)> = {
+            let mut statement = conn.prepare("PRAGMA foreign_key_check")?;
+            let mut rows = statement.query([])?;
+            if let Some(row) = rows.next()? {
+                Some((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            } else {
+                None
+            }
+        };
+        if let Some((table, rowid)) = foreign_key_error {
+            bail!("Refusing to publish database with foreign-key violation in {table} row {rowid}");
+        }
+
+        conn.execute(
+            "UPDATE BuildMetadata SET status = 'complete', completedAt = ?1 WHERE id = 1",
+            params![Utc::now().to_rfc3339()],
+        )?;
+        conn.execute_batch(
+            "PRAGMA wal_checkpoint(TRUNCATE);
+             PRAGMA synchronous = FULL;",
+        )?;
+        let journal_mode: String =
+            conn.query_row("PRAGMA journal_mode = DELETE", [], |row| row.get(0))?;
+        if !journal_mode.eq_ignore_ascii_case("delete") {
+            bail!("Failed to finalize SQLite journal before publication");
+        }
+        drop(conn);
+
+        let temp_file = self
+            .temp_file
+            .take()
+            .context("Database build temporary file is unavailable")?;
+        temp_file
+            .as_file()
+            .sync_all()
+            .context("Failed to sync completed database")?;
+        temp_file.persist(&self.destination).map_err(|error| {
+            anyhow::anyhow!(
+                "Failed to atomically publish database to {}: {}",
+                self.destination.display(),
+                error.error
+            )
+        })?;
+
+        #[cfg(unix)]
+        {
+            let parent = self
+                .destination
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            std::fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .context("Failed to sync database output directory")?;
+        }
+        Ok(())
+    }
+}
+
+pub fn create_database(db_path: &str) -> Result<DatabaseBuild> {
     p("Creating SQLite database…", false);
 
-    // Reject a pre-existing symlink at the destination: an attacker who can
-    // write to the parent directory could otherwise race the gap between the
-    // existence check and the open, redirecting the new database into a path
-    // of their choosing.
-    match std::fs::symlink_metadata(db_path) {
-        Ok(meta) => {
-            if meta.file_type().is_symlink() {
-                return Err(anyhow::anyhow!(
-                    "Refusing to write database to symlink path: {db_path}"
-                ));
-            }
-            std::fs::remove_file(db_path).context("Failed to delete existing database file")?;
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => {
-            return Err(e).context(format!(
-                "Failed to inspect existing database path: {db_path}"
-            ));
-        }
+    let destination = PathBuf::from(db_path);
+    let parent = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    if !parent.is_dir() {
+        bail!(
+            "Database output directory does not exist: {}",
+            parent.display()
+        );
     }
-    let conn = Connection::open(db_path).context("Failed to create database")?;
+    if destination.file_name().is_none() {
+        bail!("Database output path must name a file");
+    }
+
+    // NamedTempFile creates a new file with exclusive-create semantics in the
+    // destination directory. SQLite opens that already-created inode with
+    // NOFOLLOW, and the finished database replaces the destination atomically.
+    let temp_file =
+        NamedTempFile::new_in(parent).context("Failed to create secure temporary database file")?;
+    let conn = Connection::open_with_flags(
+        temp_file.path(),
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .context("Failed to create temporary database")?;
     apply_schema(&conn)?;
+    conn.execute(
+        "INSERT INTO BuildMetadata
+         (id, schemaVersion, applicationVersion, status, startedAt)
+         VALUES (1, ?1, ?2, 'building', ?3)",
+        params![
+            DATABASE_SCHEMA_VERSION,
+            env!("CARGO_PKG_VERSION"),
+            Utc::now().to_rfc3339()
+        ],
+    )?;
     p(format!("✓ ({db_path})").as_ref(), true);
+    Ok(DatabaseBuild {
+        conn: Some(conn),
+        temp_file: Some(temp_file),
+        destination,
+    })
+}
+
+pub fn record_source(
+    conn: &Connection,
+    source_name: &str,
+    metadata: &DownloadMetadata,
+    declared_sha256: Option<&str>,
+    declared_size_bytes: Option<u64>,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO SourceMetadata
+         (sourceName, requestedUrl, finalUrl, sha256, sizeBytes, retrievedAt,
+          declaredSha256, declaredSizeBytes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            source_name,
+            metadata.requested_url,
+            metadata.final_url,
+            metadata.sha256,
+            i64::try_from(metadata.size_bytes).context("Downloaded source is too large")?,
+            metadata.retrieved_at,
+            declared_sha256,
+            declared_size_bytes
+                .map(i64::try_from)
+                .transpose()
+                .context("Declared source size is too large")?
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn open_database_read_only(db_path: &str) -> Result<Connection> {
+    let metadata = std::fs::symlink_metadata(db_path)
+        .with_context(|| format!("Failed to inspect database file: {db_path}"))?;
+    if metadata.file_type().is_symlink() {
+        bail!("Refusing to open database through a symlink: {db_path}");
+    }
+    if !metadata.is_file() {
+        bail!("Database path is not a regular file: {db_path}");
+    }
+
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .with_context(|| format!("Failed to open database file: {db_path}"))?;
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DML, false)?;
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DDL, false)?;
+    conn.execute_batch("PRAGMA query_only = ON; PRAGMA foreign_keys = ON;")?;
+    let (schema_version, status): (i64, String) = conn
+        .query_row(
+            "SELECT schemaVersion, status FROM BuildMetadata WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .context("Database has no valid build-completion marker; rebuild it with stitch")?;
+    if schema_version != DATABASE_SCHEMA_VERSION || status != "complete" {
+        bail!(
+            "Database is incomplete or uses an unsupported schema (version {schema_version}, status {status})"
+        );
+    }
     Ok(conn)
 }
 
@@ -52,6 +228,28 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
          PRAGMA mmap_size = 268435456;",
     )
     .context("Failed to apply SQLite pragmas")?;
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS BuildMetadata (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            schemaVersion INTEGER NOT NULL,
+            applicationVersion TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('building', 'complete')),
+            startedAt TEXT NOT NULL,
+            completedAt TEXT
+         );
+         CREATE TABLE IF NOT EXISTS SourceMetadata (
+            sourceName TEXT PRIMARY KEY,
+            requestedUrl TEXT NOT NULL,
+            finalUrl TEXT NOT NULL,
+            sha256 TEXT NOT NULL CHECK(length(sha256) = 64),
+            sizeBytes INTEGER NOT NULL CHECK(sizeBytes >= 0),
+            retrievedAt TEXT NOT NULL,
+            declaredSha256 TEXT CHECK(declaredSha256 IS NULL OR length(declaredSha256) = 64),
+            declaredSizeBytes INTEGER CHECK(declaredSizeBytes IS NULL OR declaredSizeBytes >= 0)
+         );",
+    )
+    .context("Failed to create database metadata tables")?;
 
     // Create CWE Weakness table
     conn.execute(
@@ -190,7 +388,7 @@ FOREIGN KEY(CCIId) REFERENCES RMFCCI(id)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS Vulnerability (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
-NVDId TEXT,
+NVDId TEXT NOT NULL UNIQUE,
 Description TEXT,
 attackVector TEXT,
 attackComplexity TEXT,
@@ -277,11 +475,12 @@ pub fn display_database_summary(conn: &Connection) -> Result<()> {
             "SELECT nature, COUNT(*) as count FROM WeaknessRelationship 
              GROUP BY nature ORDER BY count DESC",
         )?;
-        let mut rows = stmt.query_map([], |row| {
+        let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
 
-        while let Some(Ok((nature, count))) = rows.next() {
+        for row in rows {
+            let (nature, count) = row?;
             p(format!("\t{nature}: {count}").to_string().as_ref(), true);
         }
     }
@@ -349,4 +548,82 @@ pub fn display_database_summary(conn: &Connection) -> Result<()> {
     p(format!("CWE→STIG Mappings: {tmp_count}").as_ref(), true);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_build_preserves_existing_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("stitch.db");
+        std::fs::write(&destination, b"existing database").unwrap();
+
+        let build = create_database(destination.to_str().unwrap()).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"existing database");
+        drop(build);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"existing database");
+    }
+
+    #[test]
+    fn published_database_is_complete_and_read_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("stitch.db");
+        create_database(destination.to_str().unwrap())
+            .unwrap()
+            .publish()
+            .unwrap();
+
+        let conn = open_database_read_only(destination.to_str().unwrap()).unwrap();
+        let status: String = conn
+            .query_row("SELECT status FROM BuildMetadata WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "complete");
+        assert!(conn.execute("DELETE FROM BuildMetadata", []).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scorer_rejects_database_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("stitch.db");
+        create_database(destination.to_str().unwrap())
+            .unwrap()
+            .publish()
+            .unwrap();
+        let link = directory.path().join("database-link.db");
+        symlink(&destination, &link).unwrap();
+        assert!(open_database_read_only(link.to_str().unwrap()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publication_replaces_symlink_without_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let victim = directory.path().join("victim");
+        let destination = directory.path().join("stitch.db");
+        std::fs::write(&victim, b"do not overwrite").unwrap();
+        symlink(&victim, &destination).unwrap();
+
+        create_database(destination.to_str().unwrap())
+            .unwrap()
+            .publish()
+            .unwrap();
+
+        assert_eq!(std::fs::read(&victim).unwrap(), b"do not overwrite");
+        assert!(
+            !std::fs::symlink_metadata(&destination)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        open_database_read_only(destination.to_str().unwrap()).unwrap();
+    }
 }

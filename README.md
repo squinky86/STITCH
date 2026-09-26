@@ -22,7 +22,7 @@ Any opinions, findings, and conclusions or recommendations expressed in this mat
 ```bash
 git clone <repository-url>
 cd STITCH
-cargo build --release
+cargo build --locked --release
 ```
 
 ## Usage
@@ -45,13 +45,17 @@ cargo build --release
 
 #### Options
 - `-o, --output <FILE>`: Output database file path (default: `stitch.db`).
-- `--stig-url <URL>`: Override the ASD STIG zip URL.
+- `--stig-url <URL>`: Override the ASD STIG zip URL. HTTPS is required.
 - `-v, --verbose`: Enable verbose output.
 - `-h, --help`: Show help information.
 
 ### Scoring (`stitch-score`)
 
 `stitch-score` dispatches on the first positional argument; the prefix selects the operation. Run `stitch-score --help` for the full list.
+
+The scorer accepts databases completed by the current builder and opens them
+read-only. Rebuild databases created by an older STITCH release so they include
+the completion and source-provenance metadata.
 
 ```bash
 # Score a CVSS vector directly (no database needed)
@@ -82,6 +86,18 @@ cargo build --release
 # to a step-by-step trace of how the score was constructed.
 ./target/release/stitch-score -v CWE-89
 ```
+
+CSV output uses standard quoting and prefixes cells that spreadsheet programs
+could otherwise interpret as formulas.
+
+## Data integrity
+
+Database builds use HTTPS-only downloads, per-feed size limits, and SHA-256
+source records in the `SourceMetadata` table. NVD feeds are checked against
+NIST's published size and SHA-256 metadata. A build is written to a secure
+temporary file and replaces the requested output atomically only after SQLite
+integrity and foreign-key checks pass. If a download or parser fails, an
+existing output database remains unchanged.
 
 ## Example Queries
 
@@ -115,14 +131,14 @@ WHERE r.target_id = 89 AND r.nature = 'ChildOf' AND r.view_id = 1000;
 - `serde` - JSON, XML, and YAML mapping
 - `serde_yaml2` - serde YAML interface
 - `serde_json` - serde JSON interface
+- `csv` - safe CSV serialization
+- `sha2` - source integrity hashing
 - `futures-util` - common containers
 - `regex` - regular expression handling
 - `chrono` - access system clock
 - `flate2` - file decompression
 - `indicatif` - progress bars
-- `once_cell` - lazy loading of values
 - `cvss` - CVSS 4.0 scoring
-- `lazy_static` - lazy loading of regexes
 - `uuid` - UUIDs for STIG generation
 
 ## Contributing

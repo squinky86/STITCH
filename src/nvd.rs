@@ -1,18 +1,24 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-use crate::common::{Args, build_insert_sql, decompress_gzip, download_file, p};
+use crate::common::{
+    Args, DownloadMetadata, MAX_NVD_GZIP_BYTES, MAX_NVD_JSON_BYTES, MAX_NVD_META_BYTES,
+    build_insert_sql, decompress_gzip, download_file, p, sha256_file,
+};
+use crate::db::record_source;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{Datelike, Utc};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rusqlite::{Connection, params_from_iter, types::Value};
 use serde::Deserialize;
+use serde::de::{DeserializeSeed, Error as _, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use std::fmt;
+use std::io::{BufReader, Read};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tempfile::NamedTempFile;
-use tokio::fs;
 use tokio::sync::mpsc;
 
 #[allow(dead_code)]
@@ -406,9 +412,323 @@ pub fn apply_v2_to_v4(cvss_v4: &mut CvssDataV40, v2: &CvssMetricV2) {
     }
 }
 
-/// Cap on simultaneous NVD downloads. NVD does rate-limit, so this stays
-/// modest; bandwidth is the dominant factor anyway.
-const NVD_DOWNLOAD_CONCURRENCY: usize = 4;
+#[derive(Debug, Clone)]
+struct NvdMeta {
+    size: u64,
+    gzip_size: u64,
+    sha256: String,
+}
+
+fn parse_nvd_meta(file: &NamedTempFile) -> Result<NvdMeta> {
+    let mut content = String::new();
+    file.reopen()?.read_to_string(&mut content)?;
+    let mut size = None;
+    let mut gzip_size = None;
+    let mut zip_size = None;
+    let mut sha256 = None;
+    for line in content.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        match key.trim() {
+            "size" => {
+                let parsed = value
+                    .trim()
+                    .parse::<u64>()
+                    .context("Invalid NVD metadata size")?;
+                if size.replace(parsed).is_some() {
+                    bail!("NVD metadata repeated the size field");
+                }
+            }
+            "gzSize" => {
+                let parsed = value
+                    .trim()
+                    .parse::<u64>()
+                    .context("Invalid NVD metadata gzip size")?;
+                if gzip_size.replace(parsed).is_some() {
+                    bail!("NVD metadata repeated the gzSize field");
+                }
+            }
+            "zipSize" => {
+                let parsed = value
+                    .trim()
+                    .parse::<u64>()
+                    .context("Invalid NVD metadata zip size")?;
+                if zip_size.replace(parsed).is_some() {
+                    bail!("NVD metadata repeated the zipSize field");
+                }
+            }
+            "sha256" if sha256.is_some() => {
+                bail!("NVD metadata repeated the sha256 field");
+            }
+            "sha256" => sha256 = Some(value.trim().to_ascii_lowercase()),
+            _ => {}
+        }
+    }
+
+    let metadata = NvdMeta {
+        size: size.context("NVD metadata omitted uncompressed size")?,
+        gzip_size: gzip_size
+            .or(zip_size)
+            .context("NVD metadata omitted gzip size")?,
+        sha256: sha256.context("NVD metadata omitted SHA-256")?,
+    };
+    if metadata.size == 0 || metadata.size > MAX_NVD_JSON_BYTES {
+        bail!(
+            "NVD metadata declared invalid JSON size {} (limit {})",
+            metadata.size,
+            MAX_NVD_JSON_BYTES
+        );
+    }
+    if metadata.gzip_size == 0 || metadata.gzip_size > MAX_NVD_GZIP_BYTES {
+        bail!(
+            "NVD metadata declared invalid gzip size {} (limit {})",
+            metadata.gzip_size,
+            MAX_NVD_GZIP_BYTES
+        );
+    }
+    if metadata.sha256.len() != 64 || !metadata.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        bail!("NVD metadata contained an invalid SHA-256 digest");
+    }
+    Ok(metadata)
+}
+
+#[derive(Debug)]
+struct NvdFeedSummary {
+    results_per_page: i64,
+    start_index: i64,
+    total_results: i64,
+    format: String,
+    version: String,
+    timestamp: String,
+    vulnerability_count: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(field_identifier, rename_all = "camelCase")]
+enum FeedField {
+    ResultsPerPage,
+    StartIndex,
+    TotalResults,
+    Format,
+    Version,
+    Timestamp,
+    Vulnerabilities,
+    #[serde(other)]
+    Other,
+}
+
+struct NvdFeedSeed<'a, F> {
+    on_vulnerability: &'a mut F,
+}
+
+impl<'de, F> DeserializeSeed<'de> for NvdFeedSeed<'_, F>
+where
+    F: FnMut(Vulnerability) -> Result<()>,
+{
+    type Value = NvdFeedSummary;
+
+    fn deserialize<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(NvdFeedVisitor {
+            on_vulnerability: self.on_vulnerability,
+        })
+    }
+}
+
+struct NvdFeedVisitor<'a, F> {
+    on_vulnerability: &'a mut F,
+}
+
+impl<'de, F> Visitor<'de> for NvdFeedVisitor<'_, F>
+where
+    F: FnMut(Vulnerability) -> Result<()>,
+{
+    type Value = NvdFeedSummary;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an NVD CVE feed object")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut results_per_page = None;
+        let mut start_index = None;
+        let mut total_results = None;
+        let mut format = None;
+        let mut version = None;
+        let mut timestamp = None;
+        let mut vulnerability_count = None;
+
+        while let Some(field) = map.next_key::<FeedField>()? {
+            match field {
+                FeedField::ResultsPerPage => {
+                    if results_per_page.replace(map.next_value()?).is_some() {
+                        return Err(A::Error::duplicate_field("resultsPerPage"));
+                    }
+                }
+                FeedField::StartIndex => {
+                    if start_index.replace(map.next_value()?).is_some() {
+                        return Err(A::Error::duplicate_field("startIndex"));
+                    }
+                }
+                FeedField::TotalResults => {
+                    if total_results.replace(map.next_value()?).is_some() {
+                        return Err(A::Error::duplicate_field("totalResults"));
+                    }
+                }
+                FeedField::Format => {
+                    if format.replace(map.next_value()?).is_some() {
+                        return Err(A::Error::duplicate_field("format"));
+                    }
+                }
+                FeedField::Version => {
+                    if version.replace(map.next_value()?).is_some() {
+                        return Err(A::Error::duplicate_field("version"));
+                    }
+                }
+                FeedField::Timestamp => {
+                    if timestamp.replace(map.next_value()?).is_some() {
+                        return Err(A::Error::duplicate_field("timestamp"));
+                    }
+                }
+                FeedField::Vulnerabilities => {
+                    if vulnerability_count.is_some() {
+                        return Err(A::Error::duplicate_field("vulnerabilities"));
+                    }
+                    vulnerability_count = Some(map.next_value_seed(VulnerabilityListSeed {
+                        on_vulnerability: self.on_vulnerability,
+                    })?);
+                }
+                FeedField::Other => {
+                    map.next_value::<IgnoredAny>()?;
+                }
+            }
+        }
+
+        Ok(NvdFeedSummary {
+            results_per_page: results_per_page
+                .ok_or_else(|| A::Error::missing_field("resultsPerPage"))?,
+            start_index: start_index.ok_or_else(|| A::Error::missing_field("startIndex"))?,
+            total_results: total_results.ok_or_else(|| A::Error::missing_field("totalResults"))?,
+            format: format.ok_or_else(|| A::Error::missing_field("format"))?,
+            version: version.ok_or_else(|| A::Error::missing_field("version"))?,
+            timestamp: timestamp.ok_or_else(|| A::Error::missing_field("timestamp"))?,
+            vulnerability_count: vulnerability_count
+                .ok_or_else(|| A::Error::missing_field("vulnerabilities"))?,
+        })
+    }
+}
+
+struct VulnerabilityListSeed<'a, F> {
+    on_vulnerability: &'a mut F,
+}
+
+impl<'de, F> DeserializeSeed<'de> for VulnerabilityListSeed<'_, F>
+where
+    F: FnMut(Vulnerability) -> Result<()>,
+{
+    type Value = u64;
+
+    fn deserialize<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(VulnerabilityListVisitor {
+            on_vulnerability: self.on_vulnerability,
+        })
+    }
+}
+
+struct VulnerabilityListVisitor<'a, F> {
+    on_vulnerability: &'a mut F,
+}
+
+impl<'de, F> Visitor<'de> for VulnerabilityListVisitor<'_, F>
+where
+    F: FnMut(Vulnerability) -> Result<()>,
+{
+    type Value = u64;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an array of NVD vulnerabilities")
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut count = 0_u64;
+        while let Some(vulnerability) = sequence.next_element::<Vulnerability>()? {
+            (self.on_vulnerability)(vulnerability).map_err(A::Error::custom)?;
+            count = count
+                .checked_add(1)
+                .ok_or_else(|| A::Error::custom("NVD vulnerability count overflow"))?;
+        }
+        Ok(count)
+    }
+}
+
+fn parse_nvd_feed<R, F>(reader: R, on_vulnerability: &mut F) -> Result<NvdFeedSummary>
+where
+    R: Read,
+    F: FnMut(Vulnerability) -> Result<()>,
+{
+    let mut deserializer = serde_json::Deserializer::from_reader(reader);
+    let summary = NvdFeedSeed { on_vulnerability }
+        .deserialize(&mut deserializer)
+        .context("Failed to parse NVD JSON")?;
+    deserializer.end().context("Trailing data in NVD JSON")?;
+    Ok(summary)
+}
+
+fn validate_nvd_feed(summary: &NvdFeedSummary, year: i32) -> Result<()> {
+    let count = i64::try_from(summary.vulnerability_count)
+        .context("NVD vulnerability count cannot fit in database")?;
+    if count == 0 || summary.total_results != count || summary.results_per_page != count {
+        bail!(
+            "NVD {year} feed count mismatch: parsed {count}, resultsPerPage {}, totalResults {}",
+            summary.results_per_page,
+            summary.total_results
+        );
+    }
+    if summary.start_index != 0
+        || summary.format != "NVD_CVE"
+        || summary.version != "2.0"
+        || summary.timestamp.trim().is_empty()
+    {
+        bail!("NVD {year} feed metadata failed semantic validation");
+    }
+    Ok(())
+}
+
+fn valid_cve_id(id: &str) -> bool {
+    let mut parts = id.split('-');
+    matches!(parts.next(), Some("CVE"))
+        && parts
+            .next()
+            .is_some_and(|part| part.len() == 4 && part.bytes().all(|byte| byte.is_ascii_digit()))
+        && parts
+            .next()
+            .is_some_and(|part| part.len() >= 4 && part.bytes().all(|byte| byte.is_ascii_digit()))
+        && parts.next().is_none()
+}
+
+struct NvdDownload {
+    year: i32,
+    gzip_file: NamedTempFile,
+    download: DownloadMetadata,
+    metadata: NvdMeta,
+}
+
+/// Keep only two compressed feeds in flight and one queued. Parsing is
+/// streaming, so the loader's memory use no longer grows with a feed year.
+const NVD_DOWNLOAD_CONCURRENCY: usize = 2;
 
 pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
     // Slot model: exactly NVD_DOWNLOAD_CONCURRENCY + 1 progress bars exist
@@ -461,7 +781,8 @@ pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
 
     // Bounded so a fast network can't run the consumer out of disk: peak
     // gz holdings ≈ N (one per worker mid-download) + channel capacity.
-    let (tx, mut rx) = mpsc::channel::<Result<(i32, NamedTempFile)>>(NVD_DOWNLOAD_CONCURRENCY);
+    let (tx, mut rx) = mpsc::channel::<Result<NvdDownload>>(1);
+    let mut workers = Vec::with_capacity(NVD_DOWNLOAD_CONCURRENCY);
 
     // Spawn one worker per slot. Each worker owns its slot bar for its
     // entire lifetime, draining the year queue and reusing the bar.
@@ -470,7 +791,7 @@ pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
         let next_year = next_year.clone();
         let tx = tx.clone();
         let args = args_arc.clone();
-        tokio::spawn(async move {
+        workers.push(tokio::spawn(async move {
             loop {
                 let idx = next_year.fetch_add(1, Ordering::Relaxed);
                 if idx >= years.len() {
@@ -483,46 +804,143 @@ pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
                     break;
                 }
                 let year = years[idx];
-                let result: Result<(i32, NamedTempFile)> = async {
-                    let mut gz_file = NamedTempFile::new()?;
-                    let url = format!(
+                let result: Result<NvdDownload> = async {
+                    let base_url = format!(
                         "https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-{year}.json.gz"
                     );
+                    let mut meta_file = NamedTempFile::new()?;
+                    let meta_url =
+                        format!("https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-{year}.meta");
                     download_file(
-                        &url,
+                        &meta_url,
+                        &mut meta_file,
+                        true,
+                        String::new(),
+                        &args,
+                        None,
+                        MAX_NVD_META_BYTES,
+                    )
+                    .await?;
+                    let metadata = parse_nvd_meta(&meta_file)?;
+
+                    let mut gz_file = NamedTempFile::new()?;
+                    let download = download_file(
+                        &base_url,
                         &mut gz_file,
                         false,
                         format!("\tDownloading {year} NVD JSON…"),
                         &args,
                         Some(&slot_bar),
+                        metadata.gzip_size,
                     )
                     .await?;
-                    Ok((year, gz_file))
+                    if download.size_bytes != metadata.gzip_size {
+                        bail!(
+                            "NVD {year} gzip size mismatch: downloaded {}, metadata declared {}",
+                            download.size_bytes,
+                            metadata.gzip_size
+                        );
+                    }
+                    Ok(NvdDownload {
+                        year,
+                        gzip_file: gz_file,
+                        download,
+                        metadata,
+                    })
                 }
                 .await;
+                let failed = result.is_err();
                 if tx.send(result).await.is_err() {
                     // Consumer dropped rx — typically because of an earlier
                     // error elsewhere. Stop pulling new years.
                     break;
                 }
+                if failed {
+                    break;
+                }
             }
-        });
+        }));
     }
     // Drop our handle so the channel closes once every worker exits.
     drop(tx);
 
     // Consumer: one year at a time, in completion order.
     let mut completed: u64 = 0;
+    let mut processing_error = None;
     while let Some(item) = rx.recv().await {
-        let (year, gz_file) = item?;
+        let item = match item {
+            Ok(item) => item,
+            Err(error) => {
+                processing_error = Some(error);
+                break;
+            }
+        };
+        let year = item.year;
         let mut json_file = NamedTempFile::new()?;
-        decompress_gzip(&gz_file, &mut json_file).await?;
+        let json_size = match decompress_gzip(&item.gzip_file, &mut json_file, item.metadata.size)
+            .await
+        {
+            Ok(size) => size,
+            Err(error) => {
+                processing_error = Some(error.context(format!("Failed to decompress NVD {year}")));
+                break;
+            }
+        };
+        if json_size != item.metadata.size {
+            processing_error = Some(anyhow::anyhow!(
+                "NVD {year} JSON size mismatch: decompressed {json_size}, metadata declared {}",
+                item.metadata.size
+            ));
+            break;
+        }
+        let json_hash = match sha256_file(json_file.path()) {
+            Ok(hash) => hash,
+            Err(error) => {
+                processing_error = Some(error.context(format!("Failed to hash NVD {year}")));
+                break;
+            }
+        };
+        if json_hash != item.metadata.sha256 {
+            processing_error = Some(anyhow::anyhow!(
+                "NVD {year} SHA-256 mismatch: downloaded content did not match NIST metadata"
+            ));
+            break;
+        }
         // Free the gz immediately — only the decompressed JSON matters now.
-        drop(gz_file);
-        nvd_parse_and_populate_database(&json_file, year, conn).await?;
+        drop(item.gzip_file);
+        if let Err(error) = nvd_parse_and_populate_database(&json_file, year, conn) {
+            processing_error = Some(error);
+            break;
+        }
+        if let Err(error) = record_source(
+            conn,
+            &format!("NVD-{year}"),
+            &item.download,
+            Some(&item.metadata.sha256),
+            Some(item.metadata.size),
+        ) {
+            processing_error = Some(error);
+            break;
+        }
         completed += 1;
         proc_bar.set_position(completed);
         proc_bar.set_message(format!("{completed}/{total_years} (last: {year})"));
+    }
+    drop(rx);
+
+    for worker in workers {
+        if let Err(join_error) = worker.await
+            && processing_error.is_none()
+        {
+            processing_error = Some(anyhow::anyhow!("NVD download worker failed: {join_error}"));
+        }
+    }
+    if let Some(error) = processing_error {
+        proc_bar.abandon_with_message("failed");
+        return Err(error);
+    }
+    if completed != total_years as u64 {
+        bail!("NVD load ended after {completed} of {total_years} years");
     }
 
     proc_bar.finish_with_message(format!("✓ ({total_years} years)"));
@@ -532,17 +950,11 @@ pub async fn process_nvd(conn: &Connection, args: &Args) -> Result<()> {
     Ok(())
 }
 
-async fn nvd_parse_and_populate_database(
+fn nvd_parse_and_populate_database(
     json_file: &NamedTempFile,
     year: i32,
     conn: &Connection,
 ) -> Result<()> {
-    let json_content = fs::read_to_string(json_file.path())
-        .await
-        .context("Failed to read NVD JSON file")?;
-
-    let feed: NvdCveFeed = serde_json::from_str(&json_content)
-        .context(format!("Failed to parse NVD JSON for year {year}"))?;
     let tx = conn.unchecked_transaction()?;
     {
         // Resolve each row's CVSS metrics + child CWE list up-front, then flush
@@ -631,134 +1043,152 @@ async fn nvd_parse_and_populate_database(
             Ok(())
         };
 
-        for v in feed.vulnerabilities {
-            let cve = &v.cve;
-
-            let mut cvss_v4 = CvssDataV40::new();
-            let mut score_version: u32 = 0;
-
-            if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v40
-                && !cvss_metrics.is_empty()
-            {
-                for cvss_metric in cvss_metrics {
-                    if cvss_metric.type_ == "Primary" {
-                        cvss_v4 = cvss_metric.cvss_data.clone();
-                        score_version = 4;
-                        break;
-                    }
+        let summary = {
+            let mut insert_vulnerability = |v: Vulnerability| -> Result<()> {
+                let cve = &v.cve;
+                if !valid_cve_id(&cve.id) {
+                    bail!(
+                        "NVD {year} feed contained invalid CVE identifier: {}",
+                        cve.id
+                    );
                 }
-            }
 
-            if score_version == 0
-                && let Some(cvss_metrics) = &cve.metrics.cvss_metric_v31
-            {
-                for cvss_metric in cvss_metrics {
-                    if cvss_metric.type_ == "Primary" {
-                        score_version = 3;
-                        apply_v3_to_v4(&mut cvss_v4, &cvss_metric.cvss_data);
-                        break;
-                    }
-                }
-            }
+                let mut cvss_v4 = CvssDataV40::new();
+                let mut score_version: u32 = 0;
 
-            if score_version == 0
-                && let Some(cvss_metrics) = &cve.metrics.cvss_metric_v30
-            {
-                for cvss_metric in cvss_metrics {
-                    if cvss_metric.type_ == "Primary" {
-                        score_version = 3;
-                        apply_v3_to_v4(&mut cvss_v4, &cvss_metric.cvss_data);
-                        break;
-                    }
-                }
-            }
-
-            if score_version == 0
-                && let Some(cvss_metrics) = &cve.metrics.cvss_metric_v2
-                && !cvss_metrics.is_empty()
-            {
-                for cvss_metric in cvss_metrics {
-                    if cvss_metric.type_ == "Primary" {
-                        score_version = 2;
-                        apply_v2_to_v4(&mut cvss_v4, cvss_metric);
-                        break;
-                    }
-                }
-            }
-
-            let description = cve
-                .descriptions
-                .iter()
-                .find(|d| d.lang == "en")
-                .map_or("No description found.", |d| d.value.as_str());
-
-            buf_values.push(Value::Text(cve.id.clone()));
-            buf_values.push(Value::Text(description.to_string()));
-            buf_values.push(Value::Text(cvss_v4.attack_vector));
-            buf_values.push(Value::Text(cvss_v4.attack_complexity));
-            buf_values.push(Value::Text(cvss_v4.attack_requirements));
-            buf_values.push(Value::Text(cvss_v4.privileges_required));
-            buf_values.push(Value::Text(cvss_v4.user_interaction));
-            buf_values.push(Value::Text(cvss_v4.vuln_confidentiality_impact));
-            buf_values.push(Value::Text(cvss_v4.vuln_integrity_impact));
-            buf_values.push(Value::Text(cvss_v4.vuln_availability_impact));
-            buf_values.push(Value::Text(cvss_v4.sub_confidentiality_impact));
-            buf_values.push(Value::Text(cvss_v4.sub_integrity_impact));
-            buf_values.push(Value::Text(cvss_v4.sub_availability_impact));
-            buf_values.push(Value::Text(cvss_v4.exploit_maturity));
-            buf_values.push(Value::Text(cvss_v4.confidentiality_requirement));
-            buf_values.push(Value::Text(cvss_v4.integrity_requirement));
-            buf_values.push(Value::Text(cvss_v4.availability_requirement));
-            buf_values.push(Value::Text(cvss_v4.modified_attack_vector));
-            buf_values.push(Value::Text(cvss_v4.modified_attack_complexity));
-            buf_values.push(Value::Text(cvss_v4.modified_attack_requirements));
-            buf_values.push(Value::Text(cvss_v4.modified_privileges_required));
-            buf_values.push(Value::Text(cvss_v4.modified_user_interaction));
-            buf_values.push(Value::Text(cvss_v4.modified_vuln_confidentiality_impact));
-            buf_values.push(Value::Text(cvss_v4.modified_vuln_integrity_impact));
-            buf_values.push(Value::Text(cvss_v4.modified_vuln_availability_impact));
-            buf_values.push(Value::Text(cvss_v4.modified_sub_confidentiality_impact));
-            buf_values.push(Value::Text(cvss_v4.modified_sub_integrity_impact));
-            buf_values.push(Value::Text(cvss_v4.modified_sub_availability_impact));
-            buf_values.push(Value::Text(cvss_v4.safety));
-            buf_values.push(Value::Text(cvss_v4.automatable));
-            buf_values.push(Value::Text(cvss_v4.provider_urgency));
-            buf_values.push(Value::Text(cvss_v4.recovery));
-            buf_values.push(Value::Text(cvss_v4.value_density));
-            buf_values.push(Value::Text(cvss_v4.vulnerability_response_effort));
-            buf_values.push(Value::Integer(i64::from(score_version)));
-
-            let mut children: Vec<(i32, bool)> = Vec::new();
-            let mut inserted: Vec<i32> = Vec::new();
-            if let Some(weaknesses) = &cve.weaknesses {
-                for weakness in weaknesses {
-                    for description in weakness
-                        .description
-                        .iter()
-                        .filter(|d| d.lang == "en" && d.value.starts_with("CWE-"))
-                    {
-                        if let Ok(tmp_weakness) =
-                            description.value.trim_start_matches("CWE-").parse::<i32>()
-                            && !inserted.contains(&tmp_weakness)
-                        {
-                            children.push((tmp_weakness, weakness.type_ == "Primary"));
-                            inserted.push(tmp_weakness);
+                if let Some(cvss_metrics) = &cve.metrics.cvss_metric_v40
+                    && !cvss_metrics.is_empty()
+                {
+                    for cvss_metric in cvss_metrics {
+                        if cvss_metric.type_ == "Primary" {
+                            cvss_v4 = cvss_metric.cvss_data.clone();
+                            score_version = 4;
+                            break;
                         }
                     }
                 }
-            }
-            pending.push(Pending { children });
 
-            if pending.len() >= VULN_BATCH {
-                flush_vulns(
-                    &tx,
-                    &mut buf_values,
-                    &mut pending,
-                    &mut map_values,
-                    &full_vuln_sql,
-                )?;
-            }
-        }
+                if score_version == 0
+                    && let Some(cvss_metrics) = &cve.metrics.cvss_metric_v31
+                {
+                    for cvss_metric in cvss_metrics {
+                        if cvss_metric.type_ == "Primary" {
+                            score_version = 3;
+                            apply_v3_to_v4(&mut cvss_v4, &cvss_metric.cvss_data);
+                            break;
+                        }
+                    }
+                }
+
+                if score_version == 0
+                    && let Some(cvss_metrics) = &cve.metrics.cvss_metric_v30
+                {
+                    for cvss_metric in cvss_metrics {
+                        if cvss_metric.type_ == "Primary" {
+                            score_version = 3;
+                            apply_v3_to_v4(&mut cvss_v4, &cvss_metric.cvss_data);
+                            break;
+                        }
+                    }
+                }
+
+                if score_version == 0
+                    && let Some(cvss_metrics) = &cve.metrics.cvss_metric_v2
+                    && !cvss_metrics.is_empty()
+                {
+                    for cvss_metric in cvss_metrics {
+                        if cvss_metric.type_ == "Primary" {
+                            score_version = 2;
+                            apply_v2_to_v4(&mut cvss_v4, cvss_metric);
+                            break;
+                        }
+                    }
+                }
+
+                let description = cve
+                    .descriptions
+                    .iter()
+                    .find(|d| d.lang == "en")
+                    .map_or("No description found.", |d| d.value.as_str());
+
+                buf_values.push(Value::Text(cve.id.clone()));
+                buf_values.push(Value::Text(description.to_string()));
+                buf_values.push(Value::Text(cvss_v4.attack_vector));
+                buf_values.push(Value::Text(cvss_v4.attack_complexity));
+                buf_values.push(Value::Text(cvss_v4.attack_requirements));
+                buf_values.push(Value::Text(cvss_v4.privileges_required));
+                buf_values.push(Value::Text(cvss_v4.user_interaction));
+                buf_values.push(Value::Text(cvss_v4.vuln_confidentiality_impact));
+                buf_values.push(Value::Text(cvss_v4.vuln_integrity_impact));
+                buf_values.push(Value::Text(cvss_v4.vuln_availability_impact));
+                buf_values.push(Value::Text(cvss_v4.sub_confidentiality_impact));
+                buf_values.push(Value::Text(cvss_v4.sub_integrity_impact));
+                buf_values.push(Value::Text(cvss_v4.sub_availability_impact));
+                buf_values.push(Value::Text(cvss_v4.exploit_maturity));
+                buf_values.push(Value::Text(cvss_v4.confidentiality_requirement));
+                buf_values.push(Value::Text(cvss_v4.integrity_requirement));
+                buf_values.push(Value::Text(cvss_v4.availability_requirement));
+                buf_values.push(Value::Text(cvss_v4.modified_attack_vector));
+                buf_values.push(Value::Text(cvss_v4.modified_attack_complexity));
+                buf_values.push(Value::Text(cvss_v4.modified_attack_requirements));
+                buf_values.push(Value::Text(cvss_v4.modified_privileges_required));
+                buf_values.push(Value::Text(cvss_v4.modified_user_interaction));
+                buf_values.push(Value::Text(cvss_v4.modified_vuln_confidentiality_impact));
+                buf_values.push(Value::Text(cvss_v4.modified_vuln_integrity_impact));
+                buf_values.push(Value::Text(cvss_v4.modified_vuln_availability_impact));
+                buf_values.push(Value::Text(cvss_v4.modified_sub_confidentiality_impact));
+                buf_values.push(Value::Text(cvss_v4.modified_sub_integrity_impact));
+                buf_values.push(Value::Text(cvss_v4.modified_sub_availability_impact));
+                buf_values.push(Value::Text(cvss_v4.safety));
+                buf_values.push(Value::Text(cvss_v4.automatable));
+                buf_values.push(Value::Text(cvss_v4.provider_urgency));
+                buf_values.push(Value::Text(cvss_v4.recovery));
+                buf_values.push(Value::Text(cvss_v4.value_density));
+                buf_values.push(Value::Text(cvss_v4.vulnerability_response_effort));
+                buf_values.push(Value::Integer(i64::from(score_version)));
+
+                let mut children: Vec<(i32, bool)> = Vec::new();
+                let mut inserted: Vec<i32> = Vec::new();
+                if let Some(weaknesses) = &cve.weaknesses {
+                    for weakness in weaknesses {
+                        for description in weakness
+                            .description
+                            .iter()
+                            .filter(|d| d.lang == "en" && d.value.starts_with("CWE-"))
+                        {
+                            if let Ok(tmp_weakness) =
+                                description.value.trim_start_matches("CWE-").parse::<i32>()
+                                && !inserted.contains(&tmp_weakness)
+                            {
+                                children.push((tmp_weakness, weakness.type_ == "Primary"));
+                                inserted.push(tmp_weakness);
+                            }
+                        }
+                    }
+                }
+                pending.push(Pending { children });
+
+                if pending.len() >= VULN_BATCH {
+                    flush_vulns(
+                        &tx,
+                        &mut buf_values,
+                        &mut pending,
+                        &mut map_values,
+                        &full_vuln_sql,
+                    )?;
+                }
+                Ok(())
+            };
+
+            let reader = BufReader::new(
+                json_file
+                    .reopen()
+                    .context("Failed to reopen NVD JSON file")?,
+            );
+            parse_nvd_feed(reader, &mut insert_vulnerability)
+                .with_context(|| format!("Failed to parse NVD JSON for year {year}"))?
+        };
+        validate_nvd_feed(&summary, year)?;
 
         flush_vulns(
             &tx,
@@ -781,6 +1211,91 @@ async fn nvd_parse_and_populate_database(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write as _;
+
+    #[test]
+    fn nvd_feed_streams_vulnerabilities_and_validates_counts() {
+        let json = br#"{
+            "resultsPerPage": 1,
+            "startIndex": 0,
+            "totalResults": 1,
+            "format": "NVD_CVE",
+            "version": "2.0",
+            "timestamp": "2026-01-01T00:00:00.000",
+            "vulnerabilities": [{
+                "cve": {
+                    "id": "CVE-2025-1234",
+                    "published": "2025-01-01",
+                    "lastModified": "2025-01-01",
+                    "vulnStatus": "Analyzed",
+                    "descriptions": [],
+                    "metrics": {},
+                    "references": []
+                }
+            }]
+        }"#;
+        let mut ids = Vec::new();
+        let summary = parse_nvd_feed(json.as_slice(), &mut |entry: Vulnerability| {
+            ids.push(entry.cve.id);
+            Ok(())
+        })
+        .unwrap();
+        validate_nvd_feed(&summary, 2025).unwrap();
+        assert_eq!(ids, ["CVE-2025-1234"]);
+    }
+
+    #[test]
+    fn streamed_nvd_feed_populates_database() {
+        let json = br#"{
+            "resultsPerPage": 1,
+            "startIndex": 0,
+            "totalResults": 1,
+            "format": "NVD_CVE",
+            "version": "2.0",
+            "timestamp": "2026-01-01T00:00:00.000",
+            "vulnerabilities": [{
+                "cve": {
+                    "id": "CVE-2025-1234",
+                    "published": "2025-01-01",
+                    "lastModified": "2025-01-01",
+                    "vulnStatus": "Analyzed",
+                    "descriptions": [{"lang": "en", "value": "fixture"}],
+                    "metrics": {},
+                    "references": []
+                }
+            }]
+        }"#;
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(json).unwrap();
+        file.flush().unwrap();
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::apply_schema(&conn).unwrap();
+
+        nvd_parse_and_populate_database(&file, 2025, &conn).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM Vulnerability", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn nvd_metadata_requires_valid_hash_and_bounded_sizes() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "size:123\ngzSize:45\nsha256:{}", "a".repeat(64)).unwrap();
+        let metadata = parse_nvd_meta(&file).unwrap();
+        assert_eq!(metadata.size, 123);
+        assert_eq!(metadata.gzip_size, 45);
+        assert_eq!(metadata.sha256, "a".repeat(64));
+
+        let mut duplicate = NamedTempFile::new().unwrap();
+        writeln!(
+            duplicate,
+            "size:123\nsize:456\ngzSize:45\nsha256:{}",
+            "a".repeat(64)
+        )
+        .unwrap();
+        assert!(parse_nvd_meta(&duplicate).is_err());
+    }
 
     fn v3(scope: &str, av: &str, ui: &str) -> CvssDataV3 {
         CvssDataV3 {

@@ -1,7 +1,11 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-use crate::common::{Args, build_insert_sql, download_file, extract_from_zip, p};
+use crate::common::{
+    Args, MAX_CWE_DOWNLOAD_BYTES, MAX_CWE_XML_BYTES, build_insert_sql, download_file,
+    extract_from_zip, p,
+};
+use crate::db::record_source;
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -38,22 +42,30 @@ pub async fn process_cwe(conn: &Connection, args: &Args) -> Result<()> {
     // Download and extract CWE XML
     let mut cwe_temp_zip = NamedTempFile::new()?;
     let mut cwe_temp_xml = NamedTempFile::new()?;
-    download_file(
+    let metadata = download_file(
         "https://cwe.mitre.org/data/xml/cwec_latest.xml.zip",
         &mut cwe_temp_zip,
         false,
         "Downloading CWE XML file from MITRE…".to_string(),
         args,
         None,
+        MAX_CWE_DOWNLOAD_BYTES,
     )
     .await?;
 
     p("Extracting CWE XML file…", false);
-    extract_from_zip(&cwe_temp_zip, &mut cwe_temp_xml, ".xml", args)?;
+    extract_from_zip(
+        &cwe_temp_zip,
+        &mut cwe_temp_xml,
+        ".xml",
+        args,
+        MAX_CWE_XML_BYTES,
+    )?;
     p("✓", true);
 
     // Parse and populate database
     cwe_parse_and_populate_database(&cwe_temp_xml, conn, args).await?;
+    record_source(conn, "CWE", &metadata, None, None)?;
 
     Ok(())
 }
@@ -251,6 +263,19 @@ pub fn parse_cwe_xml(
             _ => {}
         }
         buf.clear();
+    }
+
+    if cwe_entries.is_empty() {
+        anyhow::bail!("CWE feed contained no weaknesses, categories, or views");
+    }
+    let mut ids = std::collections::HashSet::with_capacity(cwe_entries.len());
+    for entry in &cwe_entries {
+        if entry.id == 0 || !ids.insert(entry.id) {
+            anyhow::bail!(
+                "CWE feed contained an invalid or duplicate ID: {}",
+                entry.id
+            );
+        }
     }
 
     Ok((cwe_entries, relationships))

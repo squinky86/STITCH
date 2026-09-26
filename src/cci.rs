@@ -1,7 +1,10 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-use crate::common::{Args, download_file, extract_from_zip, p};
+use crate::common::{
+    Args, MAX_CCI_DOWNLOAD_BYTES, MAX_CCI_XML_BYTES, download_file, extract_from_zip, p,
+};
+use crate::db::record_source;
 use std::fmt::Write as _;
 
 use anyhow::{Context, Result};
@@ -39,22 +42,30 @@ pub async fn process_cci(conn: &Connection, args: &Args) -> Result<()> {
     // RMF CCI Data
     let mut cci_temp_zip = NamedTempFile::new()?;
     let mut cci_temp_xml = NamedTempFile::new()?;
-    download_file(
+    let metadata = download_file(
         "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/CCI_List.zip",
         &mut cci_temp_zip,
         false,
         "Downloading CCI XML file from DISA…".to_string(),
         args,
         None,
+        MAX_CCI_DOWNLOAD_BYTES,
     )
     .await?;
 
     p("Extracting CCI XML file…", false);
-    extract_from_zip(&cci_temp_zip, &mut cci_temp_xml, ".xml", args)?;
+    extract_from_zip(
+        &cci_temp_zip,
+        &mut cci_temp_xml,
+        ".xml",
+        args,
+        MAX_CCI_XML_BYTES,
+    )?;
     p("✓", true);
 
     // Parse CCI XML and populate database
     cci_parse_and_populate_database(&cci_temp_xml, conn).await?;
+    record_source(conn, "CCI", &metadata, None, None)?;
 
     Ok(())
 }
@@ -218,6 +229,9 @@ async fn cci_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
         buf.clear();
     }
 
+    if on == 0 {
+        anyhow::bail!("CCI feed contained no usable revision 5 mappings");
+    }
     bar.finish_with_message(format!("✓ ({on})"));
 
     Ok(())

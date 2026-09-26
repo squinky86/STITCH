@@ -5,7 +5,7 @@
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 #![allow(clippy::too_many_lines)]
 
-use stitch::{nvd::CvssDataV40, stig::Stig, stig::StigCheck};
+use stitch::{db::open_database_read_only, nvd::CvssDataV40, stig::Stig, stig::StigCheck};
 
 use anyhow::{Context, Result};
 use chrono::{SecondsFormat, Utc};
@@ -16,6 +16,7 @@ use rusqlite::{Connection, Row, params};
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
+    io::{self, Write},
     str::FromStr,
 };
 use uuid::Uuid;
@@ -28,9 +29,106 @@ const MINIMUM_CVES_TO_SCORE: usize = 5;
 /// within the current round. See `doc/scoring.md` §4.2.1.
 const MINIMUM_CVES_TO_COMPLETE_ROUND: usize = 50;
 
+fn spreadsheet_safe(value: &str) -> String {
+    let dangerous = value
+        .chars()
+        .find(|character| *character != ' ')
+        .is_some_and(|character| matches!(character, '=' | '+' | '-' | '@' | '\t' | '\r' | '\n'));
+    if dangerous {
+        format!("'{value}")
+    } else {
+        value.to_string()
+    }
+}
+
+fn write_csv_fields<W: Write>(writer: W, fields: &[String]) -> Result<()> {
+    let mut csv = csv::WriterBuilder::new()
+        .quote_style(csv::QuoteStyle::Always)
+        .terminator(csv::Terminator::CRLF)
+        .from_writer(writer);
+    let safe_fields: Vec<String> = fields.iter().map(|field| spreadsheet_safe(field)).collect();
+    csv.write_record(safe_fields)?;
+    csv.flush()?;
+    Ok(())
+}
+
+fn write_csv_stdout(fields: &[String]) -> Result<()> {
+    let stdout = io::stdout();
+    write_csv_fields(stdout.lock(), fields)
+}
+
+fn write_score_header() -> Result<()> {
+    write_csv_stdout(
+        &[
+            "CWE",
+            "Title",
+            "Abstraction",
+            "Vector",
+            "ASD STIG",
+            "STIG Severity",
+            "Control",
+            "CCI",
+            "Score",
+        ]
+        .map(str::to_string),
+    )
+}
+
+fn score_value(vector: &str) -> Result<f64> {
+    if vector.starts_with("CVSS:4.0") {
+        Ok(Vector::from_str(vector)
+            .context("Failed to parse CVSS 4.0 vector string")?
+            .score()
+            .value())
+    } else if vector.starts_with("CVSS:3.1") || vector.starts_with("CVSS:3.0") {
+        Ok(Base::from_str(vector)
+            .context("Failed to parse CVSS 3.x vector string")?
+            .score()
+            .value())
+    } else {
+        anyhow::bail!("Unsupported CVSS version. Only 3.0, 3.1, and 4.0 are supported.");
+    }
+}
+
+fn write_score_record(details: &CWEDetails, vector: &str, score: f64) -> Result<()> {
+    write_csv_stdout(&[
+        details.id.to_string(),
+        details.name.clone(),
+        details.abstraction.clone(),
+        vector.to_string(),
+        details.disaid.clone(),
+        details.severity.clone(),
+        details.control.clone(),
+        details.cci.clone(),
+        format!("{score:.1}"),
+    ])
+}
+
+fn valid_control_id(control: &str) -> bool {
+    let Some((family, number)) = control.split_once('-') else {
+        return false;
+    };
+    if family.len() != 2 || !family.bytes().all(|byte| byte.is_ascii_uppercase()) {
+        return false;
+    }
+    if let Some((base, enhancement)) = number.split_once('(') {
+        !base.is_empty()
+            && base.bytes().all(|byte| byte.is_ascii_digit())
+            && enhancement.ends_with(')')
+            && enhancement[..enhancement.len() - 1]
+                .bytes()
+                .all(|byte| byte.is_ascii_digit())
+            && enhancement.len() > 1
+    } else {
+        !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+    }
+}
+
 fn get_controls_from_controls(controls: Vec<String>, db_path: &str) -> Result<()> {
-    let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {db_path}"))?;
+    if controls.is_empty() || controls.iter().any(|control| control.trim().is_empty()) {
+        anyhow::bail!("At least one non-empty RMF control identifier is required");
+    }
+    let conn = open_database_read_only(db_path)?;
 
     let placeholders = controls.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let query_controls = format!(
@@ -55,31 +153,49 @@ fn get_controls_from_controls(controls: Vec<String>, db_path: &str) -> Result<()
 
     let mut unique_controls: HashMap<u32, serde_json::Value> = HashMap::new();
 
-    let rows = stmt_controls.query_map(rusqlite::params_from_iter(controls), |row: &Row| {
-        let control_number: String = row.get(0)?;
-        let control_name: String = row.get(1)?;
-        let control_desc: String = row.get(2)?;
-        let family_abbr: String = row.get(3)?;
-        let family_name: String = row.get(4)?;
-        let control_id: u32 = row.get(5)?;
+    let rows =
+        stmt_controls.query_map(rusqlite::params_from_iter(controls.iter()), |row: &Row| {
+            let control_number: String = row.get(0)?;
+            let control_name: String = row.get(1)?;
+            let control_desc: String = row.get(2)?;
+            let family_abbr: String = row.get(3)?;
+            let family_name: String = row.get(4)?;
+            let control_id: u32 = row.get(5)?;
 
-        Ok((
-            control_id,
-            json!({
-                "control": control_number,
-                "name": control_name,
-                "description": control_desc,
-                "family": {
-                    "abbreviation": family_abbr,
-                    "name": family_name
-                }
-            }),
-        ))
-    })?;
+            Ok((
+                control_id,
+                json!({
+                    "control": control_number,
+                    "name": control_name,
+                    "description": control_desc,
+                    "family": {
+                        "abbreviation": family_abbr,
+                        "name": family_name
+                    }
+                }),
+            ))
+        })?;
 
-    for (control_id, control_json) in rows.flatten() {
+    for row in rows {
+        let (control_id, control_json) = row?;
         // Add to map. If already present, it's just ignored.
         unique_controls.entry(control_id).or_insert(control_json);
+    }
+
+    let matched_controls: HashSet<String> = unique_controls
+        .values()
+        .filter_map(|control| control.get("control")?.as_str().map(str::to_string))
+        .collect();
+    let missing_controls: Vec<&str> = controls
+        .iter()
+        .filter(|control| !matched_controls.contains(control.as_str()))
+        .map(String::as_str)
+        .collect();
+    if !missing_controls.is_empty() {
+        anyhow::bail!(
+            "No database record found for RMF control(s): {}",
+            missing_controls.join(", ")
+        );
     }
 
     let mut output_controls: Vec<serde_json::Value> = Vec::new();
@@ -92,7 +208,7 @@ fn get_controls_from_controls(controls: Vec<String>, db_path: &str) -> Result<()
         })?;
 
         // Collect the CCIs into a JSON array
-        let cci_list: Vec<serde_json::Value> = cci_rows.filter_map(Result::ok).collect();
+        let cci_list: Vec<serde_json::Value> = cci_rows.collect::<rusqlite::Result<Vec<_>>>()?;
 
         // Add the control_id and cci_list to the JSON object
         if let Some(obj) = control_json.as_object_mut() {
@@ -114,8 +230,10 @@ fn get_controls_from_controls(controls: Vec<String>, db_path: &str) -> Result<()
 }
 
 fn get_controls_from_ccis(ccis: &[u32], db_path: &str) -> Result<()> {
-    let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {db_path}"))?;
+    if ccis.is_empty() {
+        anyhow::bail!("At least one valid CCI identifier is required");
+    }
+    let conn = open_database_read_only(db_path)?;
 
     // Prepare statement to find controls for a single CCI
     let query_controls = "
@@ -140,6 +258,7 @@ fn get_controls_from_ccis(ccis: &[u32], db_path: &str) -> Result<()> {
     let mut stmt_ccis = conn.prepare(&sql_ccis)?;
 
     let mut unique_controls: HashMap<u32, serde_json::Value> = HashMap::new();
+    let mut matched_ccis: HashSet<u32> = HashSet::new();
 
     for cci_id in ccis {
         let rows = stmt_controls.query_map([cci_id], |row: &Row| {
@@ -164,10 +283,24 @@ fn get_controls_from_ccis(ccis: &[u32], db_path: &str) -> Result<()> {
             ))
         })?;
 
-        for (control_id, control_json) in rows.flatten() {
+        for row in rows {
+            let (control_id, control_json) = row?;
+            matched_ccis.insert(*cci_id);
             // Add to map. If already present, it's just ignored.
             unique_controls.entry(control_id).or_insert(control_json);
         }
+    }
+
+    let missing_ccis: Vec<String> = ccis
+        .iter()
+        .filter(|cci| !matched_ccis.contains(cci))
+        .map(|cci| format!("CCI-{cci:06}"))
+        .collect();
+    if !missing_ccis.is_empty() {
+        anyhow::bail!(
+            "No database record found for CCI(s): {}",
+            missing_ccis.join(", ")
+        );
     }
 
     let mut output_controls: Vec<serde_json::Value> = Vec::new();
@@ -183,7 +316,7 @@ fn get_controls_from_ccis(ccis: &[u32], db_path: &str) -> Result<()> {
         })?;
 
         // Collect the CCIs into a JSON array
-        let cci_list: Vec<serde_json::Value> = cci_rows.filter_map(Result::ok).collect();
+        let cci_list: Vec<serde_json::Value> = cci_rows.collect::<rusqlite::Result<Vec<_>>>()?;
 
         // Add the control_id and cci_list to the JSON object
         if let Some(obj) = control_json.as_object_mut() {
@@ -362,13 +495,17 @@ struct Args {
 }
 
 fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
-    let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {db_path}"))?;
+    let conn = open_database_read_only(db_path)?;
 
     // Lowercase both sides at comparison time. The previous
     // `replace("ULE", "ule").replace("R", "r")` normalization was a footgun:
     // any stray uppercase `R` in the ID body got silently lower-cased too.
-    let ids: Vec<String> = stig_ids.split(',').map(str::to_ascii_lowercase).collect();
+    let ids: Vec<String> = stig_ids
+        .split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect();
 
     let mut stmt_stig =
         conn.prepare("SELECT id, title, version, stigId, release, identifier FROM STIG")?;
@@ -386,6 +523,7 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
     let stigs: Vec<Stig> = stig_iterator.collect::<Result<Vec<Stig>, _>>()?;
 
     let mut result_stigs: Vec<serde_json::Value> = Vec::new();
+    let mut matched_ids: HashSet<String> = HashSet::new();
 
     for stig in stigs {
         let stig_uuid = Uuid::new_v4().to_string();
@@ -455,8 +593,7 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
                     legacy_ids: row.get::<_, String>(24)?,
                 })
             })?
-            .filter_map(std::result::Result::ok)
-            .collect(); // *** This is the crucial step: collecting the iterator into a Vec;
+            .collect::<rusqlite::Result<Vec<_>>>()?;
 
         for stigcheck in stigchecks {
             let mut legacy_ids: Vec<serde_json::Value> = Vec::new();
@@ -471,11 +608,12 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
                 .query_map([stigcheck.id], |row| {
                     Ok(json!(format!("CCI-{:06}", row.get::<_, u32>(0)?)))
                 })?
-                .filter_map(std::result::Result::ok)
-                .collect();
+                .collect::<rusqlite::Result<Vec<_>>>()?;
 
             let disa_id_lc = stigcheck.disa_id.to_ascii_lowercase();
-            let (status, finding_details) = if ids.iter().any(|id| disa_id_lc.starts_with(id)) {
+            let matching_id = ids.iter().find(|id| disa_id_lc.starts_with(id.as_str()));
+            let (status, finding_details) = if let Some(id) = matching_id {
+                matched_ids.insert(id.clone());
                 (
                     "open".to_string(),
                     "|organization| identified findings against this check.".to_string(),
@@ -551,6 +689,18 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
         result_stigs.push(result_stig);
     }
 
+    let missing_ids: Vec<&str> = ids
+        .iter()
+        .filter(|id| !matched_ids.contains(id.as_str()))
+        .map(String::as_str)
+        .collect();
+    if !missing_ids.is_empty() {
+        anyhow::bail!(
+            "No database record found for STIG rule(s): {}",
+            missing_ids.join(", ")
+        );
+    }
+
     let json = json!({
         "title": "|projName| Checklist",
         "id": Uuid::new_v4().to_string(),
@@ -574,7 +724,7 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
             "classification": null
         },
         "cklb_version": "1.0",
-        "cklb_generator": "STITCH 0.1.1"
+        "cklb_generator": concat!("STITCH ", env!("CARGO_PKG_VERSION"))
     });
 
     println!("{}", serde_json::to_string_pretty(&json)?);
@@ -586,28 +736,47 @@ fn main() -> Result<()> {
     let input = args.input.trim().to_uppercase();
 
     if args.cklb {
-        if input.starts_with("SV-") {
-            export_stig_json(&input, &args.db)?;
-        } else {
-            export_stig_json("", &args.db)?;
+        let stig_ids: Vec<&str> = input
+            .split(',')
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .collect();
+        if stig_ids.is_empty() || stig_ids.iter().any(|id| !id.starts_with("SV-")) {
+            anyhow::bail!("CKLB export requires one or more comma-separated SV identifiers");
         }
+        export_stig_json(&stig_ids.join(","), &args.db)?;
     } else if args.ccis {
-        let ccis: Vec<u32> = input
+        let mut ccis: Vec<u32> = input
             .split(',')
             .map(|s| {
-                s.to_ascii_uppercase()
+                s.trim()
+                    .to_ascii_uppercase()
                     .trim_start_matches("CCI-")
                     .parse::<u32>()
-                    .unwrap_or(0)
+                    .with_context(|| format!("Invalid CCI identifier: {s}"))
             })
-            .filter(|&id| id != 0)
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
+        if ccis.contains(&0) {
+            anyhow::bail!("CCI identifiers must be greater than zero");
+        }
+        ccis.sort_unstable();
+        ccis.dedup();
 
-        _ = get_controls_from_ccis(&ccis, &args.db);
+        get_controls_from_ccis(&ccis, &args.db)?;
     } else if args.controls {
-        let controls: Vec<String> = input.split(',').map(str::to_ascii_uppercase).collect();
+        let mut controls: Vec<String> = input
+            .split(',')
+            .map(str::trim)
+            .filter(|control| !control.is_empty())
+            .map(str::to_ascii_uppercase)
+            .collect();
+        if controls.is_empty() || controls.iter().any(|control| !valid_control_id(control)) {
+            anyhow::bail!("Invalid RMF control identifier list");
+        }
+        controls.sort();
+        controls.dedup();
 
-        _ = get_controls_from_controls(controls, &args.db);
+        get_controls_from_controls(controls, &args.db)?;
     } else if input.starts_with("CVSS:") {
         score_from_vector(&input, &args)?;
     } else if input.starts_with("CVE-") {
@@ -660,8 +829,7 @@ fn score_from_vector(vector: &str, args: &Args) -> Result<()> {
 /// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
 #[allow(clippy::similar_names)]
 fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
-    let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {db_path}"))?;
+    let conn = open_database_read_only(db_path)?;
 
     let mut stmt = conn.prepare(
         "SELECT
@@ -840,23 +1008,7 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
             })
         })?;
 
-        let mut success_count = 0;
-        let mut error_count = 0;
-        let cwe_data_result: Vec<CWEDetails> = cwe_data_elements
-            .filter_map(|r| match r {
-                Ok(v) => {
-                    success_count += 1;
-                    Some(v)
-                }
-                Err(_e) => {
-                    error_count += 1; /*eprintln!("DEBUG: Row error: {}", e);*/
-                    None
-                }
-            })
-            .collect();
-        //eprintln!("DEBUG: CWE query returned {} successes, {} errors, total rows = {}", success_count, error_count, cwe_data_result.len());
-
-        cwe_data_result
+        cwe_data_elements.collect::<rusqlite::Result<Vec<_>>>()?
     };
 
     let details: CWEDetails = if cwe_data.is_empty() {
@@ -878,25 +1030,17 @@ fn score_from_cve(cve_id: &str, db_path: &str, args: &Args) -> Result<()> {
         cwe_data.first().unwrap().clone()
     };
 
-    print!(
-        "{},\"{}\",{},{},{},{},\"{}\",\"{}\",",
-        details.id,
-        details.name,
-        details.abstraction,
-        vector_string,
-        details.disaid,
-        details.severity,
-        details.control,
-        details.cci
-    );
-    score_from_vector(&vector_string, args)?;
+    if args.verbose {
+        score_from_vector(&vector_string, args)?;
+    } else {
+        write_score_record(&details, &vector_string, score_value(&vector_string)?)?;
+    }
 
     Ok(())
 }
 
 fn score_cwes(db_path: &str, args: &Args) -> Result<()> {
-    let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {db_path}"))?;
+    let conn = open_database_read_only(db_path)?;
 
     let mut stmt = conn.prepare(
         "SELECT
@@ -919,7 +1063,7 @@ fn score_cwes(db_path: &str, args: &Args) -> Result<()> {
         .with_context(|| "Could not get CWEs from the database.".to_string())?;
 
     if !args.verbose {
-        println!("CWE,Title,Abstraction,Vector,ASD STIG,STIG Severity,Control,CCI,Score");
+        write_score_header()?;
     }
 
     for cwe in cwes {
@@ -1096,8 +1240,7 @@ struct CWEDetails {
 
 /// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
 fn score_from_stig(stig_id: &str, db_path: &str, args: &Args) -> Result<()> {
-    let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {db_path}"))?;
+    let conn = open_database_read_only(db_path)?;
 
     // Use case-insensitive LIKE with the prefix escaped, so a literal `_` in
     // the rule ID is matched as `_` not as a single-char wildcard, and the
@@ -1153,8 +1296,7 @@ fn score_from_stig(stig_id: &str, db_path: &str, args: &Args) -> Result<()> {
 
 /// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
 fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
-    let conn = Connection::open(db_path)
-        .with_context(|| format!("Failed to open database file: {db_path}"))?;
+    let conn = open_database_read_only(db_path)?;
 
     let cwe_num_id: u32 = cwe_id.to_uppercase().trim_start_matches("CWE-").parse()?;
 
@@ -1208,13 +1350,12 @@ fn score_from_cwe(cwe_id: &str, db_path: &str, args: &Args) -> Result<()> {
 /// Looks up a CVE in the database, constructs a CVSS 4.0 vector, and calculates the score.
 fn score_from(conn: &Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> Result<()> {
     if cwe_data.is_empty() {
-        eprintln!("Invalid CWE data provided");
-        return Ok(());
+        anyhow::bail!("No matching CWE/STIG mapping was found in the database");
     }
 
     let (cwe_data_flatened, rest_of_data) = cwe_data
         .split_first_mut()
-        .expect("cwe_data vector should not be empty at this point.");
+        .context("CWE result unexpectedly became empty")?;
 
     cwe_data_flatened.cci.insert_str(0, "CCI-");
 
@@ -1462,17 +1603,7 @@ fn score_from(conn: &Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> 
         if args.verbose {
             println!("Unable to score with fewer than {MINIMUM_CVES_TO_SCORE} CVEs.");
         } else {
-            println!(
-                "{},\"{}\",{},N/A,{},{},\"{}\",\"{}\",{:.1}",
-                cwe_data_flatened.id,
-                cwe_data_flatened.name,
-                cwe_data_flatened.abstraction,
-                cwe_data_flatened.disaid,
-                cwe_data_flatened.severity,
-                cwe_data_flatened.control,
-                cwe_data_flatened.cci,
-                0.0
-            );
+            write_score_record(cwe_data_flatened, "N/A", 0.0)?;
         }
         return Ok(());
     }
@@ -1728,21 +1859,14 @@ fn score_from(conn: &Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> 
     if args.verbose {
         println!("Scoring VS: {vector_string}");
         println!("Abstraction: {}", cwe_data_flatened.abstraction);
+        score_from_vector(&vector_string, args)?;
     } else {
-        print!(
-            "{},\"{}\",{},{},{},{},\"{}\",\"{}\",",
-            cwe_data_flatened.id,
-            cwe_data_flatened.name,
-            cwe_data_flatened.abstraction,
-            vector_string,
-            cwe_data_flatened.disaid,
-            cwe_data_flatened.severity,
-            cwe_data_flatened.control,
-            cwe_data_flatened.cci
-        );
+        write_score_record(
+            cwe_data_flatened,
+            &vector_string,
+            score_value(&vector_string)?,
+        )?;
     }
-
-    score_from_vector(&vector_string, args)?;
 
     Ok(())
 }
@@ -1854,5 +1978,32 @@ mod tests {
     fn map_metric_unknown_errors() {
         assert!(map_metric("UNKNOWN_VALUE").is_err());
         assert!(map_metric("").is_err());
+    }
+
+    #[test]
+    fn rmf_control_identifiers_are_validated() {
+        assert!(valid_control_id("AC-1"));
+        assert!(valid_control_id("AC-2(3)"));
+        assert!(!valid_control_id(""));
+        assert!(!valid_control_id("AC-"));
+        assert!(!valid_control_id("AC-2()"));
+        assert!(!valid_control_id("AC-2(3)junk"));
+    }
+
+    #[test]
+    fn csv_output_quotes_and_neutralizes_spreadsheet_formulas() {
+        let fields = vec![
+            "=1+1".to_string(),
+            "+cmd".to_string(),
+            "safe, with comma".to_string(),
+            "\n=cmd".to_string(),
+        ];
+        let mut output = Vec::new();
+        write_csv_fields(&mut output, &fields).unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert_eq!(
+            text,
+            "\"'=1+1\",\"'+cmd\",\"safe, with comma\",\"'\n=cmd\"\r\n"
+        );
     }
 }

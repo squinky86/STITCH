@@ -1,13 +1,16 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use chrono::Utc;
 use clap::Parser;
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use reqwest::Url;
+use sha2::{Digest, Sha256};
+use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use tempfile::NamedTempFile;
 use tokio::time::{Duration, sleep};
 use zip::ZipArchive;
@@ -15,20 +18,73 @@ use zip::ZipArchive;
 const MAX_RETRIES: u32 = 5;
 const REQUEST_TIMEOUT_SECS: u64 = 120;
 const USER_AGENT: &str = concat!("STITCH/", env!("CARGO_PKG_VERSION"));
+const MAX_ZIP_ENTRIES: usize = 10_000;
 
-/// Hard cap on bytes written by any single decompression (gzip or zip member).
-/// Sized to comfortably exceed real-world feeds (largest current NVD year is ~1 GB
-/// uncompressed) while still bounding decompression-bomb damage.
-const MAX_DECOMPRESSED_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-
-/// Hard cap on bytes accepted from a single HTTP response. NVD year files are
-/// the largest legitimate downloads (~100 MB gzipped); 2 GB leaves headroom.
-const MAX_DOWNLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+pub const MIB: u64 = 1024 * 1024;
+pub const MAX_CWE_DOWNLOAD_BYTES: u64 = 128 * MIB;
+pub const MAX_CWE_XML_BYTES: u64 = 512 * MIB;
+pub const MAX_RMF_DOWNLOAD_BYTES: u64 = 128 * MIB;
+pub const MAX_CCI_DOWNLOAD_BYTES: u64 = 128 * MIB;
+pub const MAX_CCI_XML_BYTES: u64 = 256 * MIB;
+pub const MAX_STIG_DOWNLOAD_BYTES: u64 = 128 * MIB;
+pub const MAX_STIG_XML_BYTES: u64 = 256 * MIB;
+pub const MAX_STIGWE_DOWNLOAD_BYTES: u64 = 16 * MIB;
+pub const MAX_NVD_META_BYTES: u64 = 64 * 1024;
+pub const MAX_NVD_GZIP_BYTES: u64 = 512 * MIB;
+pub const MAX_NVD_JSON_BYTES: u64 = 1024 * MIB;
 
 /// Default URL for the ASD STIG zip. DISA versions this in the URL path, so
 /// override with `--stig-url` when DISA cuts a new revision.
 pub const DEFAULT_STIG_URL: &str =
     "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_ASD_V6R4_STIG.zip";
+
+#[derive(Debug, Clone)]
+pub struct DownloadMetadata {
+    pub requested_url: String,
+    pub final_url: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+    pub retrieved_at: String,
+}
+
+fn safe_url(url: &Url) -> String {
+    let mut safe = url.clone();
+    if safe.set_username("").is_err() || safe.set_password(None).is_err() {
+        return format!("{}://<redacted>", safe.scheme());
+    }
+    safe.set_query(None);
+    safe.set_fragment(None);
+    safe.to_string()
+}
+
+fn validated_https_url(raw: &str) -> Result<Url> {
+    let url = Url::parse(raw).context("Invalid download URL")?;
+    if url.scheme() != "https" {
+        bail!("Refusing non-HTTPS download URL: {}", safe_url(&url));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        bail!("Credentials are not permitted in download URLs");
+    }
+    if url.host_str().is_none() {
+        bail!("Download URL has no host");
+    }
+    Ok(url)
+}
+
+pub fn sha256_file(path: &std::path::Path) -> Result<String> {
+    let file = std::fs::File::open(path).context("Failed to open file for hashing")?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer).context("Failed to hash file")?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
 
 /// Copies bytes from `reader` to `writer`, refusing to write more than `limit`
 /// bytes. Returns an error if the cap is reached, so a decompression bomb fails
@@ -61,11 +117,17 @@ pub struct Args {
     pub verbose: bool,
 }
 
-pub async fn decompress_gzip(input: &NamedTempFile, output: &mut NamedTempFile) -> Result<()> {
+pub async fn decompress_gzip(
+    input: &NamedTempFile,
+    output: &mut NamedTempFile,
+    max_bytes: u64,
+) -> Result<u64> {
+    output.as_file_mut().set_len(0)?;
+    output.as_file_mut().seek(SeekFrom::Start(0))?;
     let mut gz = GzDecoder::new(std::fs::File::open(input.path())?);
-    copy_capped(&mut gz, output.as_file_mut(), MAX_DECOMPRESSED_BYTES)?;
+    let written = copy_capped(&mut gz, output.as_file_mut(), max_bytes)?;
     output.as_file_mut().sync_all()?;
-    Ok(())
+    Ok(written)
 }
 
 pub async fn download_file(
@@ -75,27 +137,34 @@ pub async fn download_file(
     prefix: String,
     args: &Args,
     reuse_bar: Option<&ProgressBar>,
-) -> Result<()> {
+    max_bytes: u64,
+) -> Result<DownloadMetadata> {
     // When `reuse_bar` is provided, this download updates the caller's
     // persistent bar (resetting position/length/prefix on entry); the bar's
     // identity and place in any MultiProgress layout are preserved across
     // many calls. When None, we create and own a one-shot bar as before.
     let mut progress_bar: Option<ProgressBar> = None;
 
+    let requested_url = validated_https_url(url)?;
+    let safe_requested_url = safe_url(&requested_url);
     let client = Client::builder()
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
         .user_agent(USER_AGENT)
+        .https_only(true)
         .build()
         .context("Failed to build HTTP client")?;
 
     if args.verbose {
-        p(format!("Connecting to: {url}").as_str(), true);
+        p(
+            format!("Connecting to: {safe_requested_url}").as_str(),
+            true,
+        );
     }
 
     let mut retries = 0;
     loop {
         let current_size = file.as_file().metadata().map(|m| m.len()).unwrap_or(0);
-        let mut req = client.get(url);
+        let mut req = client.get(requested_url.clone());
 
         if retries > 0 && current_size > 0 {
             req = req.header(reqwest::header::RANGE, format!("bytes={current_size}-"));
@@ -125,11 +194,13 @@ pub async fn download_file(
                 if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
                     retries += 1;
                     if retries < MAX_RETRIES {
-                        file.as_file_mut().set_len(0).unwrap_or(());
+                        file.as_file_mut()
+                            .set_len(0)
+                            .context("Failed to reset temporary download file")?;
                         continue;
                     }
                     return Err(anyhow::anyhow!(
-                        "Failed to download {url}: Server rejected range request."
+                        "Failed to download {safe_requested_url}: server rejected range request"
                     ));
                 }
                 // Retry transient failures (5xx, 408, 429); fail fast on other 4xx
@@ -146,12 +217,12 @@ pub async fn download_file(
                         continue;
                     }
                     return Err(anyhow::anyhow!(
-                        "Failed to download {url}: Max retries exceeded."
+                        "Failed to download {safe_requested_url}: maximum retries exceeded"
                     ));
                 }
                 if !status.is_success() {
                     return Err(anyhow::anyhow!(
-                        "Failed to download {url}: HTTP status {status}"
+                        "Failed to download {safe_requested_url}: HTTP status {status}"
                     ));
                 }
                 res
@@ -161,7 +232,8 @@ pub async fn download_file(
                 if retries < MAX_RETRIES {
                     p(
                         format!(
-                            "Download failed: {e} (retry {retries}/{MAX_RETRIES}), retrying in 5 seconds..."
+                            "Download failed: {} (retry {retries}/{MAX_RETRIES}), retrying in 5 seconds...",
+                            e.without_url()
                         )
                         .as_str(),
                         true,
@@ -170,15 +242,31 @@ pub async fn download_file(
                     continue;
                 }
                 return Err(anyhow::anyhow!(
-                    "Failed to download {url}: Max retries exceeded. Last error: {e}"
+                    "Failed to download {safe_requested_url}: maximum retries exceeded. Last error: {}",
+                    e.without_url()
                 ));
             }
         };
 
+        let final_url = safe_url(response.url());
+        if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+            let content_range = response
+                .headers()
+                .get(reqwest::header::CONTENT_RANGE)
+                .context("Resumed download omitted Content-Range")?
+                .to_str()
+                .context("Resumed download returned an invalid Content-Range")?;
+            let expected_prefix = format!("bytes {current_size}-");
+            if !content_range.starts_with(&expected_prefix) {
+                bail!("Resumed download from {safe_requested_url} started at an unexpected offset");
+            }
+        }
         let content_length = response.content_length().unwrap_or(0);
         let mut current_offset = current_size;
         let total_size = if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
-            current_offset + content_length
+            current_offset.checked_add(content_length).ok_or_else(|| {
+                anyhow::anyhow!("Download size overflow from {safe_requested_url}")
+            })?
         } else {
             current_offset = 0;
             file.as_file_mut()
@@ -189,6 +277,12 @@ pub async fn download_file(
                 .context("Failed to seek temp file on 200 OK")?;
             content_length
         };
+
+        if total_size > max_bytes {
+            bail!(
+                "Refusing advertised download of {total_size} bytes from {safe_requested_url}; limit is {max_bytes} bytes"
+            );
+        }
 
         if args.verbose && total_size > 0 {
             p(format!("File size: {total_size} bytes").as_str(), true);
@@ -229,10 +323,10 @@ pub async fn download_file(
             match chunk {
                 Ok(bytes) => {
                     downloaded = downloaded.saturating_add(bytes.len() as u64);
-                    if downloaded > MAX_DOWNLOAD_BYTES {
-                        return Err(anyhow::anyhow!(
-                            "Refusing to download more than {MAX_DOWNLOAD_BYTES} bytes from {url}"
-                        ));
+                    if downloaded > max_bytes {
+                        bail!(
+                            "Refusing to download more than {max_bytes} bytes from {safe_requested_url}"
+                        );
                     }
                     file.as_file_mut()
                         .write_all(&bytes)
@@ -243,7 +337,7 @@ pub async fn download_file(
                     }
                 }
                 Err(e) => {
-                    chunk_err = Some(anyhow::anyhow!(e));
+                    chunk_err = Some(anyhow::anyhow!(e.without_url()));
                     break;
                 }
             }
@@ -267,7 +361,8 @@ pub async fn download_file(
                 continue;
             }
             return Err(anyhow::anyhow!(
-                "Failed to download {url}: Max retries exceeded. Last error: {e}"
+                "Failed to download {safe_requested_url}: maximum retries exceeded. Last error: {}",
+                e
             ));
         }
 
@@ -287,7 +382,15 @@ pub async fn download_file(
             .sync_all()
             .context("Failed to sync file to disk")?;
 
-        return Ok(());
+        let size_bytes = file.as_file().metadata()?.len();
+        let sha256 = sha256_file(file.path())?;
+        return Ok(DownloadMetadata {
+            requested_url: safe_requested_url,
+            final_url,
+            sha256,
+            size_bytes,
+            retrieved_at: Utc::now().to_rfc3339(),
+        });
     }
 }
 
@@ -296,15 +399,25 @@ pub fn extract_from_zip(
     xml_file: &mut NamedTempFile,
     ext: &str,
     args: &Args,
-) -> Result<()> {
+    max_bytes: u64,
+) -> Result<u64> {
     let file = std::fs::File::open(zip_file.path()).context("Failed to open zip file")?;
     let mut archive = ZipArchive::new(file).context("Failed to read zip archive")?;
+    if archive.len() > MAX_ZIP_ENTRIES {
+        bail!(
+            "Refusing zip archive with {} entries; limit is {MAX_ZIP_ENTRIES}",
+            archive.len()
+        );
+    }
+
+    xml_file.as_file_mut().set_len(0)?;
+    xml_file.as_file_mut().seek(SeekFrom::Start(0))?;
 
     if args.verbose {
         p("\nExtracting zip file…", false);
     }
 
-    let mut extracted = false;
+    let mut extracted_bytes = None;
     let mut sample_names: Vec<String> = Vec::new();
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|e| {
@@ -312,9 +425,15 @@ pub fn extract_from_zip(
         })?;
         let name = entry.name().to_string();
         if name.ends_with(ext) {
-            copy_capped(&mut entry, xml_file.as_file_mut(), MAX_DECOMPRESSED_BYTES)
+            if entry.size() > max_bytes {
+                bail!(
+                    "Refusing zip member {name} with declared size {} bytes; limit is {max_bytes} bytes",
+                    entry.size()
+                );
+            }
+            let written = copy_capped(&mut entry, xml_file.as_file_mut(), max_bytes)
                 .context(format!("Failed to extract {ext} file"))?;
-            extracted = true;
+            extracted_bytes = Some(written);
             break;
         }
         if sample_names.len() < 5 {
@@ -322,15 +441,16 @@ pub fn extract_from_zip(
         }
     }
 
-    if !extracted {
+    let Some(written) = extracted_bytes else {
         return Err(anyhow::anyhow!(
             "Zip archive contained no entry ending in '{}' (saw: {})",
             ext,
             sample_names.join(", ")
         ));
-    }
+    };
 
-    Ok(())
+    xml_file.as_file_mut().sync_all()?;
+    Ok(written)
 }
 
 /// Escapes SQL `LIKE` metacharacters (`%`, `_`, `\`) with a leading `\`.
@@ -427,7 +547,7 @@ mod tests {
     fn extract_from_zip_picks_matching_extension() {
         let zip = make_zip(&[("readme.txt", b"hi"), ("data.xml", b"<x/>")]);
         let mut out = NamedTempFile::new().unwrap();
-        extract_from_zip(&zip, &mut out, ".xml", &args()).unwrap();
+        extract_from_zip(&zip, &mut out, ".xml", &args(), 1024).unwrap();
         let got = std::fs::read(out.path()).unwrap();
         assert_eq!(got, b"<x/>");
     }
@@ -436,7 +556,7 @@ mod tests {
     fn extract_from_zip_skips_non_matching_then_extracts() {
         let zip = make_zip(&[("a.txt", b"a"), ("b.txt", b"b"), ("c.xml", b"<c/>")]);
         let mut out = NamedTempFile::new().unwrap();
-        extract_from_zip(&zip, &mut out, ".xml", &args()).unwrap();
+        extract_from_zip(&zip, &mut out, ".xml", &args(), 1024).unwrap();
         assert_eq!(std::fs::read(out.path()).unwrap(), b"<c/>");
     }
 
@@ -444,9 +564,26 @@ mod tests {
     fn extract_from_zip_no_match_returns_err() {
         let zip = make_zip(&[("a.txt", b"a"), ("b.json", b"{}")]);
         let mut out = NamedTempFile::new().unwrap();
-        let err = extract_from_zip(&zip, &mut out, ".xml", &args()).unwrap_err();
+        let err = extract_from_zip(&zip, &mut out, ".xml", &args(), 1024).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("no entry ending in '.xml'"), "got: {msg}");
         assert!(msg.contains("a.txt"), "should list seen names: {msg}");
+    }
+
+    #[test]
+    fn extract_from_zip_enforces_member_limit() {
+        let zip = make_zip(&[("data.xml", b"too large")]);
+        let mut out = NamedTempFile::new().unwrap();
+        let err = extract_from_zip(&zip, &mut out, ".xml", &args(), 3).unwrap_err();
+        assert!(err.to_string().contains("limit is 3 bytes"));
+    }
+
+    #[test]
+    fn download_urls_must_be_https_and_are_redacted() {
+        let err = validated_https_url("http://example.com/feed?token=secret").unwrap_err();
+        assert!(!err.to_string().contains("secret"));
+
+        let parsed = validated_https_url("https://example.com/feed?token=secret#fragment").unwrap();
+        assert_eq!(safe_url(&parsed), "https://example.com/feed");
     }
 }

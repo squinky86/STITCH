@@ -16,32 +16,34 @@ use stitch::stigwe::process_stigwe;
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    println!("STITCH Database Builder v0.1.1");
+    println!("STITCH Database Builder v{}", env!("CARGO_PKG_VERSION"));
     println!("Copyright © 2025-2026 Jon Hood");
 
     // DB Structure
-    let conn = create_database(&args.output)?;
+    let database = create_database(&args.output)?;
+    let conn = database.connection();
 
     // CWE Data
-    process_cwe(&conn, &args).await?;
+    process_cwe(conn, &args).await?;
 
     // RMF Data
-    process_rmf(&conn, &args).await?;
+    process_rmf(conn, &args).await?;
 
     // CCI Data
-    process_cci(&conn, &args).await?;
+    process_cci(conn, &args).await?;
 
     // STIG Data
-    process_stig(&conn, &args).await?;
+    process_stig(conn, &args).await?;
 
     // STIG↔CWE Mapping Data
-    process_stigwe(&conn, &args).await?;
+    process_stigwe(conn, &args).await?;
 
     // NVD Data
-    process_nvd(&conn, &args).await?;
+    process_nvd(conn, &args).await?;
 
     // Display summary
-    display_database_summary(&conn)?;
+    display_database_summary(conn)?;
+    database.publish()?;
 
     println!(
         "\nSTITCH database build completed successfully: {}",

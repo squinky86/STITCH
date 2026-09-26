@@ -1,7 +1,8 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-use crate::common::{Args, download_file, escape_like, p};
+use crate::common::{Args, MAX_STIGWE_DOWNLOAD_BYTES, download_file, escape_like, p};
+use crate::db::record_source;
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -37,19 +38,21 @@ struct MappingWithDefault {
 pub async fn process_stigwe(conn: &Connection, args: &Args) -> Result<()> {
     // STIG↔CWE Data
     let mut stigwe_temp_yaml = NamedTempFile::new()?;
-    download_file(
-        "https://raw.githubusercontent.com/squinky86/STIGWE/refs/heads/main/mappings/mappings.yaml",
+    let metadata = download_file(
+        "https://raw.githubusercontent.com/squinky86/STIGWE/0494399f4c75ac03441726e3da1e6bfd7ffac95e/mappings/mappings.yaml",
         &mut stigwe_temp_yaml,
         false,
         "Downloading STIGWE YAML file…".to_string(),
         args,
         None,
+        MAX_STIGWE_DOWNLOAD_BYTES,
     )
     .await?;
 
     // Parse STIGWE YAML and populate database
     p("Parsing STIGWE YAML and populating database:", true);
     stigwe_parse_and_populate_database(&stigwe_temp_yaml, conn).await?;
+    record_source(conn, "STIGWE", &metadata, None, None)?;
 
     Ok(())
 }
@@ -61,6 +64,9 @@ async fn stigwe_parse_and_populate_database(yaml: &NamedTempFile, conn: &Connect
 
     let mappings: Mappings =
         serde_yaml2::from_str(&yaml_content).context("Failed to parse YAML content")?;
+    if mappings.stig_to_cwe.is_empty() || mappings.cwe_to_stig.is_empty() {
+        anyhow::bail!("STIGWE mapping feed contained an empty mapping direction");
+    }
 
     // Update STIGCheck CWEId where default mapping exists
     let bar = ProgressBar::new(mappings.stig_to_cwe.len() as u64);

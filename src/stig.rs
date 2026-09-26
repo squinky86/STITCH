@@ -1,7 +1,10 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-use crate::common::{Args, download_file, extract_from_zip, p};
+use crate::common::{
+    Args, MAX_STIG_DOWNLOAD_BYTES, MAX_STIG_XML_BYTES, download_file, extract_from_zip, p,
+};
+use crate::db::record_source;
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -318,22 +321,30 @@ pub fn parse_stig_xml_reader<R: std::io::BufRead>(
 pub async fn process_stig(conn: &Connection, args: &Args) -> Result<()> {
     let mut stig_temp_zip = NamedTempFile::new()?;
     let mut stig_temp_xml = NamedTempFile::new()?;
-    download_file(
+    let metadata = download_file(
         &args.stig_url,
         &mut stig_temp_zip,
         false,
         "Downloading STIG XML file from DISA…".to_string(),
         args,
         None,
+        MAX_STIG_DOWNLOAD_BYTES,
     )
     .await?;
 
     p("Extracting STIG XML file…", false);
-    extract_from_zip(&stig_temp_zip, &mut stig_temp_xml, ".xml", args)?;
+    extract_from_zip(
+        &stig_temp_zip,
+        &mut stig_temp_xml,
+        ".xml",
+        args,
+        MAX_STIG_XML_BYTES,
+    )?;
     p("✓", true);
 
     // Parse STIG XML and populate database
     stig_parse_and_populate_database(&stig_temp_xml, conn).await?;
+    record_source(conn, "ASD-STIG", &metadata, None, None)?;
 
     Ok(())
 }
@@ -357,6 +368,9 @@ async fn stig_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection
         .iter()
         .map(|group| group.rules.len() as u64)
         .sum();
+    if total_rules == 0 {
+        anyhow::bail!("STIG benchmark contained no rules");
+    }
     bar.set_length(total_rules);
     let mut on: u32 = 0;
     bar.set_message(format!("{on}/{total_rules}"));

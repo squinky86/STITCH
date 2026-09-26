@@ -1,7 +1,8 @@
 // Copyright (c) 2025 Jon Hood
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-use crate::common::{Args, download_file, p};
+use crate::common::{Args, MAX_RMF_DOWNLOAD_BYTES, download_file, p};
+use crate::db::record_source;
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -33,11 +34,12 @@ struct RMFControl {
 pub async fn process_rmf(conn: &Connection, args: &Args) -> Result<()> {
     // Download RMF Data
     let mut rmf_temp_xml = NamedTempFile::new()?;
-    download_file("https://csrc.nist.gov/CSRC/media/Projects/risk-management/800-53%20Downloads/800-53r5/SP_800-53_v5_1_XML.xml", &mut rmf_temp_xml, false, "Downloading RMF XML file from NIST…".to_string(), args, None).await?;
+    let metadata = download_file("https://csrc.nist.gov/CSRC/media/Projects/risk-management/800-53%20Downloads/800-53r5/SP_800-53_v5_1_XML.xml", &mut rmf_temp_xml, false, "Downloading RMF XML file from NIST…".to_string(), args, None, MAX_RMF_DOWNLOAD_BYTES).await?;
 
     // Parse RMF XML and populate database
     p("Parsing NIST RMF XML and populating database:", true);
     rmf_parse_and_populate_database(&rmf_temp_xml, conn).await?;
+    record_source(conn, "NIST-SP-800-53", &metadata, None, None)?;
 
     Ok(())
 }
@@ -190,6 +192,14 @@ async fn rmf_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
             _ => {}
         }
         buf.clear();
+    }
+
+    if families.is_empty() || controls.is_empty() {
+        anyhow::bail!(
+            "NIST RMF feed failed semantic validation ({} families, {} controls)",
+            families.len(),
+            controls.len()
+        );
     }
 
     // Insert RMF Families
