@@ -72,6 +72,8 @@ fn validated_https_url(raw: &str) -> Result<Url> {
 }
 
 pub fn sha256_file(path: &std::path::Path) -> Result<String> {
+    use std::fmt::Write as _;
+
     let file = std::fs::File::open(path).context("Failed to open file for hashing")?;
     let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();
@@ -83,7 +85,12 @@ pub fn sha256_file(path: &std::path::Path) -> Result<String> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    let digest = hasher.finalize();
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut encoded, "{byte:02x}")?;
+    }
+    Ok(encoded)
 }
 
 /// Copies bytes from `reader` to `writer`, refusing to write more than `limit`
@@ -585,5 +592,17 @@ mod tests {
 
         let parsed = validated_https_url("https://example.com/feed?token=secret#fragment").unwrap();
         assert_eq!(safe_url(&parsed), "https://example.com/feed");
+    }
+
+    #[test]
+    fn sha256_matches_known_vector() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"abc").unwrap();
+        file.flush().unwrap();
+
+        assert_eq!(
+            sha256_file(file.path()).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }

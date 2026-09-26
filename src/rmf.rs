@@ -73,7 +73,7 @@ async fn rmf_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e) | Event::Empty(ref e)) => {
-                current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                current_element = e.name().as_ref().to_owned();
 
                 match current_element.as_str() {
                     "family" | "description" | "number" | "title" | "p" => {
@@ -87,10 +87,10 @@ async fn rmf_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
                 }
             }
             Ok(Event::Text(e)) if capture_text => {
-                text_buffer.push_str(&e.decode().unwrap_or_default());
+                text_buffer.push_str(&e.xml10_content());
             }
             Ok(Event::End(ref e)) => {
-                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let tag_name = e.name().as_ref().to_owned();
                 match tag_name.as_str() {
                     "family" => {
                         tmp_family = text_buffer.trim().to_string();
@@ -256,4 +256,43 @@ async fn rmf_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
     println!();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rmf_parse_and_populate_database;
+    use rusqlite::Connection;
+    use std::io::Write as _;
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn parser_populates_family_and_control() {
+        let mut xml = NamedTempFile::new().unwrap();
+        write!(
+            xml,
+            r#"<controls:controls xmlns:controls="urn:test"><controls:control><family>Access Control</family><number>AC-1</number><title>Policy and Procedures</title><description>Test description</description></controls:control></controls:controls>"#
+        )
+        .unwrap();
+        xml.flush().unwrap();
+
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::apply_schema(&conn).unwrap();
+        rmf_parse_and_populate_database(&xml, &conn).await.unwrap();
+
+        let family: String = conn
+            .query_row("SELECT name FROM RMFFamily WHERE abbr = 'AC'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let (name, description): (String, String) = conn
+            .query_row(
+                "SELECT name, description FROM RMFControl WHERE number = 'AC-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(family, "Access Control");
+        assert_eq!(name, "Policy and Procedures");
+        assert_eq!(description, "Test description");
+    }
 }

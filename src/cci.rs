@@ -126,15 +126,15 @@ async fn cci_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e) | Event::Empty(ref e)) => {
-                current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                current_element = e.name().as_ref().to_owned();
 
                 match current_element.as_str() {
                     "cci_item" => {
                         // Get the CCI ID from the id attribute
                         for attr in e.attributes() {
                             let attr = attr.context("Failed to parse CCI attribute")?;
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            let value = String::from_utf8_lossy(&attr.value);
+                            let key = attr.key.as_ref();
+                            let value = attr.value.as_ref();
 
                             if key == "id" {
                                 let tmp_cci = value.trim_start_matches("CCI-");
@@ -154,10 +154,10 @@ async fn cci_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
                         // Get the reference title and index attributes
                         for attr in e.attributes() {
                             let attr = attr.context("Failed to parse reference attribute")?;
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            let value = String::from_utf8_lossy(&attr.value);
+                            let key = attr.key.as_ref();
+                            let value = attr.value.as_ref();
 
-                            match key.as_ref() {
+                            match key {
                                 "title" => ref_title = value.to_string(),
                                 "index" => ref_index = value.to_string(),
                                 _ => {}
@@ -178,10 +178,10 @@ async fn cci_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
                 }
             }
             Ok(Event::Text(e)) if capture_text => {
-                text_buffer.push_str(&e.decode().unwrap_or_default());
+                text_buffer.push_str(&e.xml10_content());
             }
             Ok(Event::End(ref e)) => {
-                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let tag_name = e.name().as_ref().to_owned();
                 match tag_name.as_str() {
                     "definition" => {
                         current_definition = text_buffer.trim().to_string();
@@ -239,7 +239,10 @@ async fn cci_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection)
 
 #[cfg(test)]
 mod tests {
-    use super::extract_control_identifier;
+    use super::{cci_parse_and_populate_database, extract_control_identifier};
+    use rusqlite::Connection;
+    use std::io::Write as _;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn extract_control_identifier_round_trip() {
@@ -265,5 +268,38 @@ mod tests {
         // The regex matches arbitrarily long digit runs; overflow must not panic.
         assert_eq!(extract_control_identifier("AC-9999999999"), "");
         assert_eq!(extract_control_identifier("AC-1(9999999999)"), "");
+    }
+
+    #[tokio::test]
+    async fn parser_populates_revision_five_mapping() {
+        let mut xml = NamedTempFile::new().unwrap();
+        write!(
+            xml,
+            r#"<cci_list><cci_items><cci_item id="CCI-000001"><definition>Test definition</definition><references><reference title="NIST SP 800-53 Revision 5" index="AC-1"/></references></cci_item></cci_items></cci_list>"#
+        )
+        .unwrap();
+        xml.flush().unwrap();
+
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::apply_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO RMFFamily (abbr, name) VALUES ('AC', 'Access Control')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO RMFControl (RMFFamilyId, number, name, description)
+             VALUES ((SELECT id FROM RMFFamily WHERE abbr = 'AC'), 'AC-1', 'Policy', 'Test')",
+            [],
+        )
+        .unwrap();
+
+        cci_parse_and_populate_database(&xml, &conn).await.unwrap();
+        let definition: String = conn
+            .query_row("SELECT definition FROM RMFCCI WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(definition, "Test definition");
     }
 }

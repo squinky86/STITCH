@@ -10,7 +10,7 @@ use stitch::{db::open_database_read_only, nvd::CvssDataV40, stig::Stig, stig::St
 use anyhow::{Context, Result};
 use chrono::{SecondsFormat, Utc};
 use clap::Parser;
-use cvss::v3::Base;
+use cvss::v3::Vector as V3Vector;
 use cvss::v4::Vector;
 use rusqlite::{Connection, Row, params};
 use serde_json::json;
@@ -81,7 +81,7 @@ fn score_value(vector: &str) -> Result<f64> {
             .score()
             .value())
     } else if vector.starts_with("CVSS:3.1") || vector.starts_with("CVSS:3.0") {
-        Ok(Base::from_str(vector)
+        Ok(V3Vector::from_str(vector)
             .context("Failed to parse CVSS 3.x vector string")?
             .score()
             .value())
@@ -812,7 +812,7 @@ fn score_from_vector(vector: &str, args: &Args) -> Result<()> {
             println!("{:.1}", base.score().value());
         }
     } else if vector.starts_with("CVSS:3.1") || vector.starts_with("CVSS:3.0") {
-        let base = Base::from_str(vector).context("Failed to parse CVSS 3.x vector string")?;
+        let base = V3Vector::from_str(vector).context("Failed to parse CVSS 3.x vector string")?;
         if args.verbose {
             println!("CVSS 3.x Vector: {vector}");
             println!("Qualitative Severity: {}", base.severity());
@@ -1978,6 +1978,18 @@ mod tests {
     fn map_metric_unknown_errors() {
         assert!(map_metric("UNKNOWN_VALUE").is_err());
         assert!(map_metric("").is_err());
+    }
+
+    #[test]
+    fn current_cvss_crate_scores_v3_and_v4_vectors() {
+        assert_eq!(
+            score_value("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H").unwrap(),
+            9.8
+        );
+        assert_eq!(
+            score_value("CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:H/SI:H/SA:H").unwrap(),
+            10.0
+        );
     }
 
     #[test]

@@ -110,7 +110,7 @@ pub fn parse_cwe_xml(
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e) | Event::Empty(ref e)) => {
-                current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                current_element = e.name().as_ref().to_owned();
 
                 match current_element.as_str() {
                     "Weakness" | "Category" | "View" => {
@@ -125,10 +125,10 @@ pub fn parse_cwe_xml(
                         // Parse attributes
                         for attr in e.attributes() {
                             let attr = attr.context("Failed to parse weakness attribute")?;
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            let value = String::from_utf8_lossy(&attr.value);
+                            let key = attr.key.as_ref();
+                            let value = attr.value.as_ref();
 
-                            match key.as_ref() {
+                            match key {
                                 "Abstraction" => {
                                     weakness.abstraction = value.to_string();
                                 }
@@ -155,10 +155,10 @@ pub fn parse_cwe_xml(
                             for attr in e.attributes() {
                                 let attr =
                                     attr.context("Failed to parse relationship attribute")?;
-                                let key = String::from_utf8_lossy(attr.key.as_ref());
-                                let value = String::from_utf8_lossy(&attr.value);
+                                let key = attr.key.as_ref();
+                                let value = attr.value.as_ref();
 
-                                match key.as_ref() {
+                                match key {
                                     "CWE_ID" => {
                                         relationship.target_id = value.parse::<u32>().unwrap_or(0);
                                     }
@@ -178,10 +178,10 @@ pub fn parse_cwe_xml(
                 }
             }
             Ok(Event::Text(e)) if capture_text => {
-                text_buffer.push_str(&e.decode().unwrap_or_default());
+                text_buffer.push_str(&e.xml10_content());
             }
             Ok(Event::End(ref e)) => {
-                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let tag_name = e.name().as_ref().to_owned();
                 match tag_name.as_str() {
                     "Weakness" | "Category" | "View" => {
                         if let Some(mut weakness) = current_weakness.take() {
