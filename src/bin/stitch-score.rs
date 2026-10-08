@@ -555,7 +555,10 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
 					VulnDiscussion,
 					Weight,
 					CWEId,
-					LegacyIds
+					LegacyIds,
+					CheckContentRefHref,
+					CheckContentRefName,
+					GroupDescription
 				FROM STIGCheck
 				WHERE STIGId = ?1",
         )?;
@@ -589,15 +592,18 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
                     version: row.get::<_, String>(20)?,
                     vuln_discussion: row.get::<_, Option<String>>(21)?.unwrap_or_default(),
                     weight: row.get::<_, f32>(22)?,
-                    cwe_id: row.get::<_, u32>(23)?,
+                    cwe_id: row.get::<_, Option<u32>>(23)?,
                     legacy_ids: row.get::<_, String>(24)?,
+                    check_content_ref_href: row.get::<_, Option<String>>(25)?.unwrap_or_default(),
+                    check_content_ref_name: row.get::<_, Option<String>>(26)?.unwrap_or_default(),
+                    group_description: row.get::<_, Option<String>>(27)?.unwrap_or_default(),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         for stigcheck in stigchecks {
             let mut legacy_ids: Vec<serde_json::Value> = Vec::new();
-            for lid in stigcheck.legacy_ids.split(',') {
+            for lid in stigcheck.legacy_ids.split(',').filter(|id| !id.is_empty()) {
                 legacy_ids.push(json!(lid));
             }
 
@@ -634,8 +640,9 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
                 "classification": "Unclassified",
                 "severity": stigcheck.severity,
                 "rule_version": stigcheck.version,
-                "group_title": stigcheck.title,
+                "group_title": stigcheck.vuln_group_id,
                 "rule_title": stigcheck.title,
+                "reference_identifier": stigcheck.reference,
                 "fix_text": stigcheck.fix_text,
                 "false_positives": stigcheck.false_positives,
                 "false_negatives": stigcheck.false_negatives,
@@ -650,8 +657,8 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
                 "security_override_guidance": stigcheck.severity_override_guidance,
                 "ia_controls": stigcheck.ia_controls,
                 "check_content_ref": {
-                    "href": format!("{}.xml", stig.stig_id),
-                    "name": "M"
+                    "href": stigcheck.check_content_ref_href,
+                    "name": stigcheck.check_content_ref_name
                 },
                 "legacy_ids": legacy_ids,
                 "ccis": ccis,
@@ -659,7 +666,7 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
                     {
                         "id": stigcheck.vuln_id,
                         "title": stigcheck.vuln_group_id,
-                        "description": "<GroupDescription></GroupDescription>"
+                        "description": stigcheck.group_description
                     }
                 ],
                 "createdAt": Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),

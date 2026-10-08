@@ -29,6 +29,9 @@ cargo build --locked --release
 
 ### Building the database (`stitch`)
 
+The default ASD benchmark is **V6R5** (Release 5, benchmark date 30 Sep 2026),
+with STIGWE mappings pinned to the corresponding V6R5 update.
+
 ```bash
 # Build database with default settings (writes to ./stitch.db)
 ./target/release/stitch
@@ -73,8 +76,9 @@ the completion and source-provenance metadata.
 # Score every CWE in the database (CSV to stdout)
 ./target/release/stitch-score CWES
 
-# Export STIG checks for a comma-separated list of rule IDs as CKLB JSON
-./target/release/stitch-score -s SV-222387r960735_rule,SV-222388r1043182_rule
+# Export the complete STIG as CKLB JSON, marking the listed rules open
+# Stable SV IDs select the current revision from the database.
+./target/release/stitch-score -s SV-222387,SV-222545 > checklist.cklb
 
 # Look up RMF control info by CCI(s)
 ./target/release/stitch-score -c CCI-000001,CCI-000002
@@ -89,6 +93,13 @@ the completion and source-provenance metadata.
 
 CSV output uses standard quoting and prefixes cells that spreadsheet programs
 could otherwise interpret as formulas.
+
+CKLB exports use the benchmark and rule metadata stored in the database. Rebuild
+existing databases with the updated `stitch` before exporting V6R5 checklists;
+upgrading `stitch-score` alone does not update benchmark content. The current
+schema also preserves the XCCDF check references and group descriptions. A V6R5
+export identifies password-lifetime rule `SV-222545r1263524_rule` and its 180-day
+maximum, along with `Release: 5 Benchmark Date: 30 Sep 2026`.
 
 ## Data integrity
 
@@ -144,6 +155,15 @@ WHERE r.target_id = 89 AND r.nature = 'ChildOf' AND r.view_id = 1000;
 ## Contributing
 
 Please submit pull requests or issues.
+
+The CKLB integration tests include a small V6R5 XCCDF excerpt and run offline
+with `cargo test --locked --all-targets`. To also compare all 286 rules in the
+original DISA archive through database ingestion and CKLB export:
+
+```bash
+STITCH_ASD_V6R5_ZIP=../STIGWE/U_ASD_V6R5_STIG.zip \
+  cargo test --locked --test cklb asd_v6r5_full_archive -- --ignored
+```
 
 ## Copyright and License
 

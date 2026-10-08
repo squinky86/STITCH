@@ -2,5 +2,6 @@
 **/*.rs.bk
 *.db
 *.xml
+!/tests/fixtures/*.xml
 *.zip
 .DS_Store

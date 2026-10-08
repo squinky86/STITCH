@@ -39,7 +39,7 @@ pub async fn process_stigwe(conn: &Connection, args: &Args) -> Result<()> {
     // STIG↔CWE Data
     let mut stigwe_temp_yaml = NamedTempFile::new()?;
     let metadata = download_file(
-        "https://raw.githubusercontent.com/squinky86/STIGWE/0494399f4c75ac03441726e3da1e6bfd7ffac95e/mappings/mappings.yaml",
+        "https://raw.githubusercontent.com/squinky86/STIGWE/bd415e4974eb7380d1727981316bd644d961b78e/mappings/mappings.yaml",
         &mut stigwe_temp_yaml,
         false,
         "Downloading STIGWE YAML file…".to_string(),

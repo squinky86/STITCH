@@ -11,7 +11,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
-use tokio::fs;
 
 /// Public database structures
 #[derive(Debug)]
@@ -29,6 +28,8 @@ pub struct StigCheck {
     pub id: u32,
     pub check_content: String,
     pub check_sys: String,
+    pub check_content_ref_href: String,
+    pub check_content_ref_name: String,
     pub disa_id: String,
     pub documentable: bool,
     pub false_negatives: String,
@@ -46,11 +47,12 @@ pub struct StigCheck {
     pub third_party_tools: String,
     pub title: String,
     pub vuln_group_id: String,
+    pub group_description: String,
     pub vuln_id: String,
     pub version: String,
     pub vuln_discussion: String,
     pub weight: f32,
-    pub cwe_id: u32,
+    pub cwe_id: Option<u32>,
     pub legacy_ids: String,
 }
 
@@ -343,18 +345,17 @@ pub async fn process_stig(conn: &Connection, args: &Args) -> Result<()> {
     p("✓", true);
 
     // Parse STIG XML and populate database
-    stig_parse_and_populate_database(&stig_temp_xml, conn).await?;
+    let reader = std::io::BufReader::new(
+        std::fs::File::open(stig_temp_xml.path()).context("Failed to open STIG XML file")?,
+    );
+    import_stig_xml(reader, conn)?;
     record_source(conn, "ASD-STIG", &metadata, None, None)?;
 
     Ok(())
 }
 
-async fn stig_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection) -> Result<()> {
-    let xml_content = fs::read_to_string(xml.path())
-        .await
-        .context("Failed to read STIG XML file")?;
-
-    let reader = std::io::Cursor::new(xml_content);
+/// Import an XCCDF benchmark into an initialized database, preserving CKLB metadata.
+pub fn import_stig_xml<R: std::io::BufRead>(reader: R, conn: &Connection) -> Result<()> {
     let bar = ProgressBar::new(100);
     bar.set_style(
         ProgressStyle::default_bar()
@@ -423,10 +424,12 @@ async fn stig_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection
 					MitigationControl, Mitigations, PotentialImpacts,
 					Reference, Responsibility, STIGId, Severity,
 					SeverityOverrideGuidance, ThirdPartyTools, Title,
-					VULNGroupId, VULNId, Version, VulnDiscussion, Weight, LegacyIds
+					VULNGroupId, VULNId, Version, VulnDiscussion, Weight, LegacyIds,
+					CheckContentRefHref, CheckContentRefName, GroupDescription
 				) VALUES (
 					?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-					?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
+					?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24,
+					?25, ?26, ?27
 				)",
                 params![
                     check
@@ -460,7 +463,16 @@ async fn stig_parse_and_populate_database(xml: &NamedTempFile, conn: &Connection
                     rule.version,
                     desc.vuln_discussion,
                     rule.weight,
-                    rule.legacy_ids().join(",")
+                    rule.legacy_ids().join(","),
+                    check
+                        .check_content_ref
+                        .as_ref()
+                        .and_then(|r| r.href.as_deref()),
+                    check
+                        .check_content_ref
+                        .as_ref()
+                        .and_then(|r| r.name.as_deref()),
+                    group.description,
                 ],
             )?;
             let check_id = conn.last_insert_rowid();

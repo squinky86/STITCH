@@ -36,7 +36,7 @@ pub const MAX_NVD_JSON_BYTES: u64 = 1024 * MIB;
 /// Default URL for the ASD STIG zip. DISA versions this in the URL path, so
 /// override with `--stig-url` when DISA cuts a new revision.
 pub const DEFAULT_STIG_URL: &str =
-    "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_ASD_V6R4_STIG.zip";
+    "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_ASD_V6R5_STIG.zip";
 
 #[derive(Debug, Clone)]
 pub struct DownloadMetadata {
@@ -114,7 +114,7 @@ pub struct Args {
     #[arg(short, long, default_value = "stitch.db")]
     pub output: String,
 
-    /// Override the ASD STIG zip URL. Defaults to the V6R4 release on DISA's
+    /// Override the ASD STIG zip URL. Defaults to the V6R5 release on DISA's
     /// public site; override when DISA releases a new revision.
     #[arg(long, default_value = DEFAULT_STIG_URL)]
     pub stig_url: String,

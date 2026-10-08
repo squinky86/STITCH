@@ -9,7 +9,7 @@ use rusqlite::{Connection, OpenFlags, config::DbConfig, params};
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 
-const DATABASE_SCHEMA_VERSION: i64 = 1;
+const DATABASE_SCHEMA_VERSION: i64 = 2;
 
 pub struct DatabaseBuild {
     conn: Option<Connection>,
@@ -205,7 +205,7 @@ pub fn open_database_read_only(db_path: &str) -> Result<Connection> {
         .context("Database has no valid build-completion marker; rebuild it with stitch")?;
     if schema_version != DATABASE_SCHEMA_VERSION || status != "complete" {
         bail!(
-            "Database is incomplete or uses an unsupported schema (version {schema_version}, status {status})"
+            "Database is incomplete or uses an unsupported schema (version {schema_version}, status {status}); rebuild it with stitch"
         );
     }
     Ok(conn)
@@ -343,6 +343,8 @@ identifier TEXT
 id INTEGER PRIMARY KEY AUTOINCREMENT,
 CheckContent TEXT,
 CheckSys TEXT,
+CheckContentRefHref TEXT,
+CheckContentRefName TEXT,
 DISAId TEXT,
 Documentable INTEGER NOT NULL DEFAULT 0,
 FalseNegatives TEXT,
@@ -360,6 +362,7 @@ SeverityOverrideGuidance TEXT,
 ThirdPartyTools TEXT,
 Title TEXT,
 VULNGroupId TEXT,
+GroupDescription TEXT,
 VULNId TEXT,
 Version TEXT,
 VulnDiscussion TEXT,
@@ -564,6 +567,23 @@ mod tests {
         assert_eq!(std::fs::read(&destination).unwrap(), b"existing database");
         drop(build);
         assert_eq!(std::fs::read(&destination).unwrap(), b"existing database");
+    }
+
+    #[test]
+    fn scorer_rejects_old_schema_with_rebuild_instructions() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("stitch.db");
+        let database = create_database(destination.to_str().unwrap()).unwrap();
+        database
+            .connection()
+            .execute(
+                "UPDATE BuildMetadata SET schemaVersion = 1 WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        database.publish().unwrap();
+        let error = open_database_read_only(destination.to_str().unwrap()).unwrap_err();
+        assert!(error.to_string().contains("rebuild it with stitch"));
     }
 
     #[test]
