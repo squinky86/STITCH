@@ -430,7 +430,10 @@ pub fn extract_from_zip(
         let mut entry = archive.by_index(i).map_err(|e| {
             anyhow::anyhow!("Could not read file index {i} in the downloaded zip file: {e}")
         })?;
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .with_context(|| format!("Failed to decode zip member name at index {i}"))?
+            .into_owned();
         if name.ends_with(ext) {
             if entry.size() > max_bytes {
                 bail!(

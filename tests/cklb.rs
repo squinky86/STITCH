@@ -8,6 +8,66 @@ use stitch::{
 };
 
 const V6R5_EXCERPT: &str = include_str!("fixtures/asd_v6r5_excerpt.xml");
+// Extracted from the supplied STIG Viewer empty.cklb, retaining the rules in
+// V6R5_EXCERPT and adjusting only the STIG's size to match that subset.
+const VIEWER_EXCERPT: &str = include_str!("fixtures/stig_viewer_asd_v6r5_excerpt.cklb");
+
+/// Compare every field and JSON type with an independently exported checklist.
+/// Document identity, target name, and selected findings vary between exports;
+/// export_and_check validates the selections and UUID relationships separately.
+fn assert_matches_viewer(actual: &Value, expected: &Value, path: &str) {
+    if path == "$.id" || path.ends_with(".uuid") || path.ends_with(".stig_uuid") {
+        uuid::Uuid::parse_str(actual.as_str().expect(path)).expect(path);
+        return;
+    }
+    if matches!(path, "$.title" | "$.target_data.host_name") || path.ends_with(".finding_details") {
+        assert!(actual.is_string(), "{path}: expected a string");
+        return;
+    }
+    if path.ends_with(".status") {
+        assert!(
+            matches!(actual.as_str(), Some("open" | "not_reviewed")),
+            "{path}: invalid generated status"
+        );
+        return;
+    }
+    match (actual, expected) {
+        (Value::Object(actual), Value::Object(expected)) => {
+            assert_eq!(
+                actual.keys().collect::<Vec<_>>(),
+                expected.keys().collect::<Vec<_>>(),
+                "{path}: field names differ"
+            );
+            for (key, expected) in expected {
+                assert_matches_viewer(&actual[key], expected, &format!("{path}.{key}"));
+            }
+        }
+        (Value::Array(actual), Value::Array(expected)) => {
+            if path.ends_with(".ccis") || path.ends_with(".legacy_ids") {
+                // Identifier order does not change the checklist's meaning.
+                let mut actual: Vec<_> = actual.iter().map(|v| v.as_str().expect(path)).collect();
+                let mut expected: Vec<_> = expected.iter().map(|v| v.as_str().unwrap()).collect();
+                actual.sort_unstable();
+                expected.sort_unstable();
+                assert_eq!(actual, expected, "{path}");
+            } else {
+                assert_eq!(actual.len(), expected.len(), "{path}: array sizes differ");
+                for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+                    assert_matches_viewer(actual, expected, &format!("{path}[{index}]"));
+                }
+            }
+        }
+        (Value::String(actual), Value::String(expected)) => {
+            // XML parsers normalize CRLF; Viewer preserves it in some text.
+            assert_eq!(
+                actual.replace("\r\n", "\n"),
+                expected.replace("\r\n", "\n"),
+                "{path}"
+            );
+        }
+        _ => assert_eq!(actual, expected, "{path}"),
+    }
+}
 
 /// Exercise XML ingestion, database publication, and the real CKLB CLI together.
 fn export_and_check(
@@ -60,6 +120,7 @@ fn export_and_check(
     assert_eq!(stigs.len(), 1);
     let stig = &stigs[0];
     assert_eq!(stig["stig_name"], benchmark.title);
+    assert_eq!(stig["display_name"], "Application Security and Development");
     assert_eq!(stig["stig_id"], "Application_Security_Development_STIG");
     assert_eq!(stig["version"], "6");
     assert_eq!(
@@ -74,6 +135,11 @@ fn export_and_check(
     assert_eq!(rules.len(), source_rule_count);
 
     let mut uuids = BTreeSet::new();
+    for value in [&checklist["id"], &stig["uuid"]] {
+        let uuid = value.as_str().unwrap();
+        uuid::Uuid::parse_str(uuid).unwrap();
+        assert!(uuids.insert(uuid));
+    }
     for group in &benchmark.groups {
         for source in &group.rules {
             let rule = rules
@@ -85,12 +151,13 @@ fn export_and_check(
             let check_ref = check.check_content_ref.as_ref().unwrap();
             let expected = json!({
                 "group_id": group.id,
+                "group_id_src": group.id,
                 "rule_id": source.id.strip_suffix("_rule").unwrap(),
-                "group_title": group.title,
+                "group_title": source.title,
                 "rule_title": source.title,
                 "rule_version": source.version,
                 "severity": source.severity,
-                "weight": source.weight.to_string(),
+                "weight": format!("{:?}", source.weight),
                 "reference_identifier": source.reference.identifier,
                 "fix_text": source.fixtext.as_ref().map(|fix| fix.value.as_str()).unwrap_or_default(),
                 "check_content": check.check_content.as_deref().unwrap(),
@@ -125,7 +192,6 @@ fn export_and_check(
                 .collect();
             assert_eq!(ccis, source.cci_idents().into_iter().collect());
             assert_eq!(rule["stig_uuid"], stig["uuid"]);
-            assert_eq!(rule["STIGUuid"], stig["uuid"]);
             assert_eq!(rule["srg_id"], group.title);
             let uuid = rule["uuid"].as_str().unwrap();
             uuid::Uuid::parse_str(uuid).unwrap();
@@ -168,6 +234,8 @@ fn asd_v6r5_cklb_preserves_benchmark_content() {
         " SV-222545 , sv-222434R1263534_RULE ",
         &["V-222545", "V-222434"],
     );
+    let viewer: Value = serde_json::from_str(VIEWER_EXCERPT).unwrap();
+    assert_matches_viewer(&checklist, &viewer, "$");
     let rules = checklist["stigs"][0]["rules"].as_array().unwrap();
     let password = rules
         .iter()
@@ -198,6 +266,7 @@ fn asd_v6r5_cklb_preserves_benchmark_content() {
 #[test]
 fn cklb_preserves_custom_metadata_and_empty_legacy_ids() {
     let xml = V6R5_EXCERPT
+        .replace("weight=\"10.0\"", "weight=\"2.75\"")
         .replace(
             "Application_Security_and_Development_STIG.xml",
             "custom-checks.xml",
@@ -223,6 +292,7 @@ fn cklb_preserves_custom_metadata_and_empty_legacy_ids() {
         .find(|rule| rule["group_id"] == "V-265634")
         .unwrap();
     assert_eq!(no_legacy["legacy_ids"], json!([]));
+    assert_eq!(no_legacy["weight"], "2.75");
 }
 
 #[test]
@@ -238,10 +308,14 @@ fn asd_v6r5_full_archive() {
         .unwrap()
         .read_to_string(&mut xml)
         .unwrap();
-    export_and_check(
+    let checklist = export_and_check(
         &xml,
         286,
         "SV-265634r1117183,SV-222614r1117151",
         &["V-265634", "V-222614"],
     );
+    if let Some(path) = std::env::var_os("STITCH_ASD_V6R5_CKLB") {
+        let viewer: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_matches_viewer(&checklist, &viewer, "$");
+    }
 }

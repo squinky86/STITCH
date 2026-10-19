@@ -29,8 +29,9 @@ cargo build --locked --release
 
 ### Building the database (`stitch`)
 
-The default ASD benchmark is **V6R5** (Release 5, benchmark date 30 Sep 2026),
-with STIGWE mappings pinned to the corresponding V6R5 update.
+The default ASD benchmark is **Application Security and Development Version: 6
+Release: 5** (V6R5, benchmark date 30 Sep 2026), with STIGWE mappings pinned to
+the corresponding V6R5 update.
 
 ```bash
 # Build database with default settings (writes to ./stitch.db)
@@ -101,6 +102,25 @@ schema also preserves the XCCDF check references and group descriptions. A V6R5
 export identifies password-lifetime rule `SV-222545r1263524_rule` and its 180-day
 maximum, along with `Release: 5 Benchmark Date: 30 Sep 2026`.
 
+CKLB field names, types, and default mode follow the supplied CKLB 1.0 reference
+exported by STIG Viewer. `group_id` and `group_id_src` contain the vulnerability ID;
+`group_title` and `rule_title` contain the descriptive rule title. The SRG ID
+remains in `srg_id` and `group_tree[].title`. Exports use `stig_uuid` for the
+parent link, decimal strings such as `"10.0"` for weights, and trimmed STIG
+display names, without additional STITCH-specific fields.
+
+The benchmark identity **Application Security and Development Version: 6
+Release: 5** is stored in separate CKLB fields, as in STIG Viewer:
+
+| Field | Value |
+| --- | --- |
+| `display_name` | `Application Security and Development` |
+| `version` | `6` |
+| `release_info` | `Release: 5 Benchmark Date: 30 Sep 2026` |
+
+`stig_name` retains the full official title, `Application Security and Development
+Security Technical Implementation Guide`.
+
 ## Data integrity
 
 Database builds use HTTPS-only downloads, per-feed size limits, and SHA-256
@@ -156,14 +176,21 @@ WHERE r.target_id = 89 AND r.nature = 'ChildOf' AND r.view_id = 1000;
 
 Please submit pull requests or issues.
 
-The CKLB integration tests include a small V6R5 XCCDF excerpt and run offline
-with `cargo test --locked --all-targets`. To also compare all 286 rules in the
-original DISA archive through database ingestion and CKLB export:
+The CKLB integration tests include matching V6R5 XCCDF and STIG Viewer CKLB
+excerpts and run offline with `cargo test --locked --all-targets`. The CKLB
+fixture comes from STIG Viewer's `empty.cklb`, with only the rule list and size
+reduced to the three XCCDF fixture rules. Tests compare all field names, types,
+and benchmark content, allowing per-export IDs, target names, selected findings,
+line endings, and CCI/legacy-ID ordering to differ. To also compare all 286 rules
+in the original DISA archive through database ingestion and CKLB export:
 
 ```bash
 STITCH_ASD_V6R5_ZIP=../STIGWE/U_ASD_V6R5_STIG.zip \
   cargo test --locked --test cklb asd_v6r5_full_archive -- --ignored
 ```
+
+Set `STITCH_ASD_V6R5_CKLB=/path/to/empty.cklb` as well to compare the complete
+export with a STIG Viewer reference for that benchmark.
 
 ## Copyright and License
 

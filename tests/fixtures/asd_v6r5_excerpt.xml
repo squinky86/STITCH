@@ -63,7 +63,7 @@ Review user password settings and validate the application is configured to expi
 
 If user passwords are not configured to expire after 180 days, or if the application does not have the ability to control this setting, this is a finding.</check-content></check></Rule></Group>
 <Group id="V-265634"><title>SRG-APP-000625</title><description>&lt;GroupDescription&gt;&lt;/GroupDescription&gt;</description><Rule id="SV-265634r1117183_rule" weight="10.0" severity="medium"><version>APSC-DV-002010</version><title>The application must implement NSA-approved cryptography to protect classified information in accordance with applicable federal laws, Executive Orders, directives, policies, regulations, and standards.</title><description>&lt;VulnDiscussion&gt;Use of weak or untested encryption algorithms undermines the purposes of utilizing encryption to protect classified data. The application must implement cryptographic modules adhering to the higher standards approved by the federal government since this provides assurance they have been tested and validated.
-
+&#32;
 Advanced Encryption Standard (AES)
 Symmetric block cipher used for information protection
 FIPS Pub 197
@@ -84,10 +84,10 @@ Algorithm used for computing a condensed representation of information
 FIPS Pub 180-4
 
 Use SHA-384 to protect up to TOP SECRET.
-
+&#32;
 Diffie-Hellman (DH) Key Exchange
 Asymmetric algorithm used for key establishment
-IETF RFC 3526
+IETF RFC 3526&#32;
 Minimum 3072-bit modulus to protect up to TOP SECRET
 
 RSA
@@ -95,7 +95,7 @@ Asymmetric algorithm used for key establishment
 NIST SP 800-56B rev 1
 Minimum 3072-bit modulus to protect up to TOP SECRET
 
-RSA
+RSA&#32;
 Asymmetric algorithm used for digital signatures
 FIPS PUB 186-4
 Minimum 3072 bit-modulus to protect up to TOP SECRET.&lt;/VulnDiscussion&gt;&lt;FalsePositives&gt;&lt;/FalsePositives&gt;&lt;FalseNegatives&gt;&lt;/FalseNegatives&gt;&lt;Documentable&gt;false&lt;/Documentable&gt;&lt;Mitigations&gt;&lt;/Mitigations&gt;&lt;SeverityOverrideGuidance&gt;&lt;/SeverityOverrideGuidance&gt;&lt;PotentialImpacts&gt;&lt;/PotentialImpacts&gt;&lt;ThirdPartyTools&gt;&lt;/ThirdPartyTools&gt;&lt;MitigationControl&gt;&lt;/MitigationControl&gt;&lt;Responsibility&gt;&lt;/Responsibility&gt;&lt;IAControls&gt;&lt;/IAControls&gt;</description><reference><dc:title>DPMS Target Application Security and Development</dc:title><dc:publisher>DISA</dc:publisher><dc:type>DPMS Target</dc:type><dc:subject>Application Security and Development</dc:subject><dc:identifier>4093</dc:identifier></reference><ident system="http://cyber.mil/legacy">SV-84811</ident><ident system="http://cyber.mil/legacy">V-70189</ident><ident system="http://cyber.mil/cci">CCI-002450</ident><fixtext fixref="F-69459r997306_fix">Configure application to encrypt stored classified information; Ensure encryption is performed using NIST FIPS 140-2-validated encryption.

@@ -631,16 +631,17 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
             let check = json!({
                 "uuid": Uuid::new_v4().to_string(),
                 "stig_uuid": stig_uuid,
-                "target_key": null,
-                "stig_ref": null,
                 "group_id": stigcheck.vuln_id,
+                "group_id_src": stigcheck.vuln_id,
                 "rule_id": stigcheck.disa_id.replace("_rule", ""),
                 "rule_id_src": stigcheck.disa_id,
-                "weight": format!("{:1}", stigcheck.weight),
+                // Preserve the decimal point in whole weights ("10.0") without
+                // rounding fractional weights to a fixed number of places.
+                "weight": format!("{:?}", stigcheck.weight),
                 "classification": "Unclassified",
                 "severity": stigcheck.severity,
                 "rule_version": stigcheck.version,
-                "group_title": stigcheck.vuln_group_id,
+                "group_title": stigcheck.title,
                 "rule_title": stigcheck.title,
                 "reference_identifier": stigcheck.reference,
                 "fix_text": stigcheck.fix_text,
@@ -669,9 +670,6 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
                         "description": stigcheck.group_description
                     }
                 ],
-                "createdAt": Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-                "updatedAt": Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-                "STIGUuid": stig_uuid,
                 "status": status,
                 "overrides": {},
                 "comments": "",
@@ -683,7 +681,7 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
 
         let result_stig = json!({
             "stig_name": stig.title,
-            "display_name": stig.title.replace("Security Technical Implementation Guide", "").replace("Security Requirements Guide", ""),
+            "display_name": stig.title.replace("Security Technical Implementation Guide", "").replace("Security Requirements Guide", "").trim(),
             "stig_id": stig.stig_id,
             "release_info": stig.release,
             "version": stig.version,
@@ -714,7 +712,7 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
 
         "stigs": result_stigs,
         "active": true,
-        "mode": 1,
+        "mode": 2,
         "has_path": false,
         "target_data": {
             "target_type": "Computing",
@@ -730,8 +728,7 @@ fn export_stig_json(stig_ids: &str, db_path: &str) -> Result<()> {
             "web_db_instance": "",
             "classification": null
         },
-        "cklb_version": "1.0",
-        "cklb_generator": concat!("STITCH ", env!("CARGO_PKG_VERSION"))
+        "cklb_version": "1.0"
     });
 
     println!("{}", serde_json::to_string_pretty(&json)?);

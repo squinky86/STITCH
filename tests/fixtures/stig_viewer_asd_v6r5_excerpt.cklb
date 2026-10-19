@@ -1,0 +1,190 @@
+{
+  "title": "empty",
+  "id": "71be61d6-45a9-4ce3-a41b-7b1efa4f95c8",
+  "stigs": [
+    {
+      "stig_name": "Application Security and Development Security Technical Implementation Guide",
+      "display_name": "Application Security and Development",
+      "stig_id": "Application_Security_Development_STIG",
+      "release_info": "Release: 5 Benchmark Date: 30 Sep 2026",
+      "version": "6",
+      "uuid": "16633353-4609-4ec5-9def-ee5ee0099654",
+      "reference_identifier": "4093",
+      "size": 3,
+      "rules": [
+        {
+          "group_id_src": "V-222434",
+          "group_tree": [
+            {
+              "id": "V-222434",
+              "title": "SRG-APP-000068",
+              "description": "<GroupDescription></GroupDescription>"
+            }
+          ],
+          "group_id": "V-222434",
+          "severity": "low",
+          "group_title": "The application must display the Standard Mandatory DoW Notice and Consent Banner before granting access to the application.",
+          "rule_id_src": "SV-222434r1263534_rule",
+          "rule_id": "SV-222434r1263534",
+          "rule_version": "APSC-DV-000550",
+          "rule_title": "The application must display the Standard Mandatory DoW Notice and Consent Banner before granting access to the application.",
+          "fix_text": "Configure the application to present the standard DoW-approved banner prior to granting access to the application.",
+          "weight": "10.0",
+          "check_content": "If the application has no interactive user interface, this requirement is not applicable.\n\nLog on to the application as a user.\n\nObserve the screen and ensure the DoW-approved banner is displayed prior to obtaining access to the application. Refer to the vulnerability discussion for the approved text.\n\nIf the only way to access the application is through the OS console, e.g., a fat client application installed on a GFE desktop or laptop, and that GFE is configured to display the DoW banner, an additional banner is not required at the application level.\n\nIf the standard DoW-approved banner is not displayed prior to obtaining access, this is a finding.",
+          "check_content_ref": {
+            "href": "Application_Security_and_Development_STIG.xml",
+            "name": "M"
+          },
+          "classification": "Unclassified",
+          "discussion": "Display of the DoW-approved use notification before granting access to the application ensures privacy and security notification verbiage used is consistent with applicable federal laws, Executive Orders, directives, policies, regulations, standards, and guidance.\n\nSystem use notifications are required only for access via logon interfaces with human users and are not required when such human interfaces do not exist.\n\nThe banner must be formatted in accordance with DTM-08-060. Use the following verbiage for applications that can accommodate banners of 1300 characters:\n\n\"You are accessing a U.S. Government (USG) Information System (IS) that is provided for USG-authorized use only.\n\nBy using this IS (which includes any device attached to this IS), you consent to the following conditions:\n\n-The USG routinely intercepts and monitors communications on this IS for purposes including, but not limited to, penetration testing, COMSEC monitoring, network operations and defense, personnel misconduct (PM), law enforcement (LE), and counterintelligence (CI) investigations.\n\n-At any time, the USG may inspect and seize data stored on this IS.\n\n-Communications using, or data stored on, this IS are not private, are subject to routine monitoring, interception, and search, and may be disclosed or used for any USG-authorized purpose.\n\n-This IS includes security measures (e.g., authentication and access controls) to protect USG interests--not for your personal benefit or privacy.\n\n-Notwithstanding the above, using this IS does not constitute consent to PM, LE or CI investigative searching or monitoring of the content of privileged communications, or work product, related to personal representation or services by attorneys, psychotherapists, or clergy, and their assistants. Such communications and work product are private and confidential. See User Agreement for details.\"\n\nUse the following verbiage for operating systems that have severe limitations on the number of characters that can be displayed in the banner:\n\n\"I've read & consent to terms in IS user agreem't.\"",
+          "false_positives": "",
+          "false_negatives": "",
+          "documentable": "false",
+          "security_override_guidance": "",
+          "potential_impacts": "",
+          "third_party_tools": "",
+          "ia_controls": "",
+          "responsibility": "",
+          "mitigations": "",
+          "mitigation_control": "",
+          "legacy_ids": [
+            "V-69349",
+            "SV-83971"
+          ],
+          "ccis": [
+            "CCI-000048"
+          ],
+          "reference_identifier": "4093",
+          "uuid": "4632a68b-a1b5-46a3-a7df-fe35b3d598f5",
+          "stig_uuid": "16633353-4609-4ec5-9def-ee5ee0099654",
+          "status": "not_reviewed",
+          "overrides": {},
+          "comments": "",
+          "finding_details": "",
+          "srg_id": "SRG-APP-000068"
+        },
+        {
+          "group_id_src": "V-222545",
+          "group_tree": [
+            {
+              "id": "V-222545",
+              "title": "SRG-APP-000174",
+              "description": "<GroupDescription></GroupDescription>"
+            }
+          ],
+          "group_id": "V-222545",
+          "severity": "medium",
+          "group_title": "The application must enforce a 180-day maximum password lifetime restriction.",
+          "rule_id_src": "SV-222545r1263524_rule",
+          "rule_id": "SV-222545r1263524",
+          "rule_version": "APSC-DV-001770",
+          "rule_title": "The application must enforce a 180-day maximum password lifetime restriction.",
+          "fix_text": "Configure the application to have a maximum password lifetime of 180 days.",
+          "weight": "10.0",
+          "check_content": "Review the application documentation and interview the application administrator to identify if the application uses passwords for user authentication.\n\nIf the application does not use passwords, this requirement is Not Applicable.\n\nAccess the application management interface and view the user password settings page.\n\nReview user password settings and validate the application is configured to expire and force a password change after 180 days.\n\nIf user passwords are not configured to expire after 180 days, or if the application does not have the ability to control this setting, this is a finding.",
+          "check_content_ref": {
+            "href": "Application_Security_and_Development_STIG.xml",
+            "name": "M"
+          },
+          "classification": "Unclassified",
+          "discussion": "Use of passwords for application authentication is intended only for limited situations and should not be used as a replacement for two-factor common access card (CAC)-enabled authentication.\n\nExamples of situations where a user ID and password might be used include but are not limited to:\n\n- When the application user base does not have a CAC and is not a current DoW employee, member of the military, or a DoW contractor.\n- When an application user has been officially designated as a Temporary Exception User; one who is temporarily unable to present a CAC for some reason (lost, damaged, not yet issued, broken card reader) and to satisfy urgent organizational needs must be temporarily permitted to use user ID/password authentication until the problem with CAC use has been remedied.\n- When the application is publicly available and or hosting publicly releasable data requiring some degree of need-to-know protection.\n\nAny password, no matter how complex, can eventually be cracked. Therefore, passwords need to be changed at specific intervals.\n\nOne method of minimizing this risk is to use complex passwords and periodically change them. If the application does not limit the lifetime of passwords and force users to change their passwords, there is the risk that the system and/or application passwords could be compromised.\n\nThis requirement does not include emergency administration accounts which are meant for access to the application in case of failure. These accounts are not required to have maximum password lifetime restrictions.",
+          "false_positives": "",
+          "false_negatives": "",
+          "documentable": "false",
+          "security_override_guidance": "",
+          "potential_impacts": "",
+          "third_party_tools": "",
+          "ia_controls": "",
+          "responsibility": "",
+          "mitigations": "",
+          "mitigation_control": "",
+          "legacy_ids": [
+            "SV-84195",
+            "V-69573"
+          ],
+          "ccis": [
+            "CCI-004066",
+            "CCI-000199"
+          ],
+          "reference_identifier": "4093",
+          "uuid": "1faf9e7b-6976-434e-ac76-f08ce0b6a76c",
+          "stig_uuid": "16633353-4609-4ec5-9def-ee5ee0099654",
+          "status": "not_reviewed",
+          "overrides": {},
+          "comments": "",
+          "finding_details": "",
+          "srg_id": "SRG-APP-000174"
+        },
+        {
+          "group_id_src": "V-265634",
+          "group_tree": [
+            {
+              "id": "V-265634",
+              "title": "SRG-APP-000625",
+              "description": "<GroupDescription></GroupDescription>"
+            }
+          ],
+          "group_id": "V-265634",
+          "severity": "medium",
+          "group_title": "The application must implement NSA-approved cryptography to protect classified information in accordance with applicable federal laws, Executive Orders, directives, policies, regulations, and standards.",
+          "rule_id_src": "SV-265634r1117183_rule",
+          "rule_id": "SV-265634r1117183",
+          "rule_version": "APSC-DV-002010",
+          "rule_title": "The application must implement NSA-approved cryptography to protect classified information in accordance with applicable federal laws, Executive Orders, directives, policies, regulations, and standards.",
+          "fix_text": "Configure application to encrypt stored classified information; Ensure encryption is performed using NIST FIPS 140-2-validated encryption.\n\nEncrypt stored, non-SAMI classified information using NIST FIPS 140-2-validated encryption.\n\nImplement NSA-validated type-1 encryption of all SAMI data stored in the enclave.",
+          "weight": "10.0",
+          "check_content": "Review the application documentation, system security plan and interview the application administrator to determine if the application processes classified data.\n\nIf the application does not process classified data, this requirement is not applicable.\n\nIdentify the data classifications and the cryptographic protections established to protect the application data.\n\nVerify the application is configured to utilize the appropriate encryption based upon data classification, cryptographic tasks that need to be performed (information protection, hashing, signing) and information protection requirements.\n\nNIST-certified cryptography must be used to store classified non-Sources and Methods Intelligence (SAMI) information if required by the information owner.\n\nNSA-validated type-1 encryption must be used for all SAMI data stored in the enclave.\n\nIf the application is not configured to utilize the NSA-approved cryptographic modules in accordance with data protection requirements specified in the security plan, this is a finding.",
+          "check_content_ref": {
+            "href": "Application_Security_and_Development_STIG.xml",
+            "name": "M"
+          },
+          "classification": "Unclassified",
+          "discussion": "Use of weak or untested encryption algorithms undermines the purposes of utilizing encryption to protect classified data. The application must implement cryptographic modules adhering to the higher standards approved by the federal government since this provides assurance they have been tested and validated.\n \nAdvanced Encryption Standard (AES)\nSymmetric block cipher used for information protection\nFIPS Pub 197\nUse 256 bit keys to protect up to TOP SECRET\n\nElliptic Curve Diffie-Hellman (ECDH) Key Exchange\nAsymmetric algorithm used for key establishment\nNIST SP 800-56A\nUse Curve P-384 to protect up to TOP SECRET.\n\nElliptic Curve Digital Signature Algorithm (ECDSA)\nAsymmetric algorithm used for digital signatures\nFIPS Pub 186-4\nUse Curve P-384 to protect up to TOP SECRET.\n\nSecure Hash Algorithm (SHA)\nAlgorithm used for computing a condensed representation of information\nFIPS Pub 180-4\n\nUse SHA-384 to protect up to TOP SECRET.\n \nDiffie-Hellman (DH) Key Exchange\nAsymmetric algorithm used for key establishment\nIETF RFC 3526 \nMinimum 3072-bit modulus to protect up to TOP SECRET\n\nRSA\nAsymmetric algorithm used for key establishment\nNIST SP 800-56B rev 1\nMinimum 3072-bit modulus to protect up to TOP SECRET\n\nRSA \nAsymmetric algorithm used for digital signatures\nFIPS PUB 186-4\nMinimum 3072 bit-modulus to protect up to TOP SECRET.",
+          "false_positives": "",
+          "false_negatives": "",
+          "documentable": "false",
+          "security_override_guidance": "",
+          "potential_impacts": "",
+          "third_party_tools": "",
+          "ia_controls": "",
+          "responsibility": "",
+          "mitigations": "",
+          "mitigation_control": "",
+          "legacy_ids": [
+            "SV-84811",
+            "V-70189"
+          ],
+          "ccis": [
+            "CCI-002450"
+          ],
+          "reference_identifier": "4093",
+          "uuid": "6ace91b1-a7cb-4e41-aafe-b964de92cb0d",
+          "stig_uuid": "16633353-4609-4ec5-9def-ee5ee0099654",
+          "status": "not_reviewed",
+          "overrides": {},
+          "comments": "",
+          "finding_details": "",
+          "srg_id": "SRG-APP-000625"
+        }
+      ]
+    }
+  ],
+  "active": true,
+  "mode": 2,
+  "has_path": false,
+  "target_data": {
+    "target_type": "Computing",
+    "host_name": "",
+    "ip_address": "",
+    "mac_address": "",
+    "fqdn": "",
+    "comments": "",
+    "role": "None",
+    "is_web_database": false,
+    "technology_area": "",
+    "web_db_site": "",
+    "web_db_instance": "",
+    "classification": null
+  },
+  "cklb_version": "1.0"
+}
