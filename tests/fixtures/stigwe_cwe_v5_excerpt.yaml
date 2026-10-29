@@ -1,0 +1,193 @@
+# Excerpt of squinky86/STIGWE at 4a52cc1596d2eeec7df9fd9943d63ef71da6ebe5.
+stig_to_cwe:
+  SV-222389:
+    cwe_ids:
+    - id: CWE-1463
+      default: true
+    - id: CWE-1462
+      default: false
+    - id: CWE-1464
+      default: false
+  SV-222390:
+    cwe_ids:
+    - id: CWE-1463
+      default: true
+    - id: CWE-1462
+      default: false
+    - id: CWE-1464
+      default: false
+  SV-222391:
+    cwe_ids:
+    - id: CWE-1464
+      default: true
+    - id: CWE-1462
+      default: false
+    - id: CWE-1465
+      default: false
+  SV-222392:
+    cwe_ids:
+    - id: CWE-223
+      default: true
+  SV-222400:
+    cwe_ids:
+    - id: CWE-1469
+      default: true
+    - id: CWE-294
+      default: false
+  SV-222403:
+    cwe_ids:
+    - id: CWE-1472
+      default: true
+    - id: CWE-287
+      default: false
+  SV-222404:
+    cwe_ids:
+    - id: CWE-1472
+      default: true
+    - id: CWE-287
+      default: false
+  SV-222549:
+    cwe_ids:
+    - id: CWE-1464
+      default: true
+    - id: CWE-1462
+      default: false
+    - id: CWE-1466
+      default: false
+  SV-222564:
+    cwe_ids:
+    - id: CWE-1464
+      default: true
+  SV-222566:
+    cwe_ids:
+    - id: CWE-1463
+      default: true
+    - id: CWE-1464
+      default: false
+  SV-222568:
+    cwe_ids:
+    - id: CWE-404
+      default: true
+    - id: CWE-1464
+      default: false
+  SV-222578:
+    cwe_ids:
+    - id: CWE-1465
+      default: true
+    - id: CWE-1462
+      default: false
+    - id: CWE-1464
+      default: false
+  SV-222582:
+    cwe_ids:
+    - id: CWE-1467
+      default: true
+    - id: CWE-384
+      default: false
+    - id: CWE-1462
+      default: false
+cwe_to_stig:
+  CWE-1461:
+    stig_ids:
+    - id: SV-222648
+      default: true
+  CWE-1462:
+    stig_ids:
+    - id: SV-222580
+      default: true
+    - id: SV-222389
+      default: false
+    - id: SV-222390
+      default: false
+    - id: SV-222391
+      default: false
+    - id: SV-222549
+      default: false
+    - id: SV-222578
+      default: false
+    - id: SV-222582
+      default: false
+    - id: SV-222583
+      default: false
+  CWE-1463:
+    stig_ids:
+    - id: SV-222389
+      default: true
+    - id: SV-222390
+      default: false
+    - id: SV-222566
+      default: false
+  CWE-1464:
+    stig_ids:
+    - id: SV-222549
+      default: true
+    - id: SV-222389
+      default: false
+    - id: SV-222390
+      default: false
+    - id: SV-222391
+      default: false
+    - id: SV-222564
+      default: false
+    - id: SV-222566
+      default: false
+    - id: SV-222568
+      default: false
+    - id: SV-222578
+      default: false
+  CWE-1465:
+    stig_ids:
+    - id: SV-222578
+      default: true
+    - id: SV-222391
+      default: false
+  CWE-1466:
+    stig_ids:
+    - id: SV-222520
+      default: true
+    - id: SV-222549
+      default: false
+  CWE-1467:
+    stig_ids:
+    - id: SV-222582
+      default: true
+    - id: SV-222583
+      default: false
+  CWE-1469:
+    stig_ids:
+    - id: SV-222400
+      default: true
+  CWE-1470:
+    stig_ids:
+    - id: SV-222556
+      default: true
+  CWE-1471:
+    stig_ids:
+    - id: SV-222605
+      default: true
+    - id: SV-222606
+      default: false
+  CWE-1472:
+    stig_ids:
+    - id: SV-222545
+      default: true
+    - id: SV-222403
+      default: false
+    - id: SV-222404
+      default: false
+  CWE-1473:
+    stig_ids:
+    - id: SV-222553
+      default: true
+  CWE-1474:
+    stig_ids:
+    - id: SV-222605
+      default: true
+  CWE-1475:
+    stig_ids:
+    - id: SV-222395
+      default: true
+  CWE-1476:
+    stig_ids:
+    - id: SV-222667
+      default: true

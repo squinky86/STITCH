@@ -39,7 +39,7 @@ pub async fn process_stigwe(conn: &Connection, args: &Args) -> Result<()> {
     // STIG↔CWE Data
     let mut stigwe_temp_yaml = NamedTempFile::new()?;
     let metadata = download_file(
-        "https://raw.githubusercontent.com/squinky86/STIGWE/bd415e4974eb7380d1727981316bd644d961b78e/mappings/mappings.yaml",
+        "https://raw.githubusercontent.com/squinky86/STIGWE/4a52cc1596d2eeec7df9fd9943d63ef71da6ebe5/mappings/mappings.yaml",
         &mut stigwe_temp_yaml,
         false,
         "Downloading STIGWE YAML file…".to_string(),
@@ -62,8 +62,13 @@ async fn stigwe_parse_and_populate_database(yaml: &NamedTempFile, conn: &Connect
         .await
         .context("Failed to read YAML file")?;
 
+    import_stigwe_yaml(&yaml_content, conn)
+}
+
+/// Apply the default mappings from a STIGWE YAML document.
+pub fn import_stigwe_yaml(yaml_content: &str, conn: &Connection) -> Result<()> {
     let mappings: Mappings =
-        serde_yaml2::from_str(&yaml_content).context("Failed to parse YAML content")?;
+        serde_yaml2::from_str(yaml_content).context("Failed to parse YAML content")?;
     if mappings.stig_to_cwe.is_empty() || mappings.cwe_to_stig.is_empty() {
         anyhow::bail!("STIGWE mapping feed contained an empty mapping direction");
     }

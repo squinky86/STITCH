@@ -1078,7 +1078,7 @@ fn score_cwes(db_path: &str, args: &Args) -> Result<()> {
         }
         if cwe.2 {
             if args.verbose {
-                println!("Categories cannot be scored.");
+                println!("Groupings/categories cannot be scored.");
             }
             continue;
         }
@@ -1200,7 +1200,8 @@ fn get_cve_data_by_weakness(
 /// Fetches child CWEs given a weakness ID in a given View.
 fn get_child_cwes(conn: &Connection, weakness_id: u32, view_id: u32) -> Result<Vec<u32>> {
     let mut stmt = conn.prepare(
-        "SELECT source_id FROM WeaknessRelationship WHERE target_id = ?1 AND view_id = ?2",
+        "SELECT source_id FROM WeaknessRelationship
+         WHERE target_id = ?1 AND view_id = ?2 AND nature = 'ChildOf'",
     )?;
 
     let cwe_iter = stmt.query_map(params![weakness_id, view_id], |row| row.get(0))?;
@@ -1214,7 +1215,8 @@ fn get_child_cwes(conn: &Connection, weakness_id: u32, view_id: u32) -> Result<V
 /// Fetches parent CWEs given a weakness ID in a given View.
 fn get_parent_cwes(conn: &Connection, weakness_id: u32, view_id: u32) -> Result<Vec<u32>> {
     let mut stmt = conn.prepare(
-        "SELECT target_id FROM WeaknessRelationship WHERE source_id = ?1 AND view_id = ?2",
+        "SELECT target_id FROM WeaknessRelationship
+         WHERE source_id = ?1 AND view_id = ?2 AND nature = 'ChildOf'",
     )?;
 
     let cwe_iter = stmt.query_map(params![weakness_id, view_id], |row| row.get(0))?;
@@ -1378,7 +1380,7 @@ fn score_from(conn: &Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> 
 
     if cwe_data_flatened.category {
         if args.verbose {
-            println!("Categories cannot be scored.");
+            println!("Groupings/categories cannot be scored.");
         }
         return Ok(());
     }
@@ -1885,6 +1887,31 @@ mod tests {
 
     fn iter(v: &[&str]) -> std::vec::IntoIter<String> {
         s(v).into_iter()
+    }
+
+    #[test]
+    fn scoring_hierarchy_only_follows_child_of_in_the_requested_view() {
+        let conn = Connection::open_in_memory().unwrap();
+        stitch::db::apply_schema(&conn).unwrap();
+        for id in [1, 2, 3, 4, 5, 6, 7, 1000, 1003] {
+            conn.execute(
+                "INSERT INTO Weakness (id, name, abstraction) VALUES (?1, 'Test', 'Base')",
+                [id],
+            )
+            .unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO WeaknessRelationship (source_id, target_id, nature, view_id) VALUES
+            (1, 2, 'ChildOf', 1000), (7, 1, 'ChildOf', 1000),
+            (1, 3, 'Overlaps', 1000), (3, 1, 'Overlaps', 1000),
+            (1, 4, 'CanPrecede', 1000), (1, 5, 'PeerOf', 1000),
+            (5, 1, 'PeerOf', 1000), (1, 6, 'ChildOf', 1003);",
+        )
+        .unwrap();
+        assert_eq!(get_parent_cwes(&conn, 1, 1000).unwrap(), vec![2]);
+        assert_eq!(get_child_cwes(&conn, 1, 1000).unwrap(), vec![7]);
+        assert_eq!(get_child_cwes(&conn, 2, 1000).unwrap(), vec![1]);
+        assert_eq!(get_parent_cwes(&conn, 1, 1003).unwrap(), vec![6]);
     }
 
     #[test]

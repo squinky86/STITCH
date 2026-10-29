@@ -31,7 +31,20 @@ cargo build --locked --release
 
 The default ASD benchmark is **Application Security and Development Version: 6
 Release: 5** (V6R5, benchmark date 30 Sep 2026), with STIGWE mappings pinned to
-the corresponding V6R5 update.
+the [CWE 5.0 / V6R5 update](https://github.com/squinky86/STIGWE/commit/4a52cc1596d2eeec7df9fd9943d63ef71da6ebe5).
+
+The builder reads MITRE's latest CWE catalog, including **CWE 5.0 / schema 8.0**.
+Schema 8 `Grouping` entries use the existing database `category` flag and are
+excluded from scoring, as are legacy categories, views, and deprecated entries.
+Parent/child scoring traversal follows only `ChildOf` relationships in View
+1000; relationships such as `Overlaps` are stored but do not establish ancestry.
+Weaknesses with no declared impact scopes use their CVE-derived impacts,
+regardless of abstraction. This extends the previous Class-only fallback to
+cover incomplete Base entries such as CWE-1464, avoiding a false zero score.
+
+Rebuild existing databases to pick up CWE 5.0 and the updated STIGWE defaults.
+For example, `SV-222389` now maps to `CWE-1463` instead of the deprecated
+`CWE-613`. Updating the binaries alone does not refresh an existing database.
 
 ```bash
 # Build database with default settings (writes to ./stitch.db)
@@ -191,6 +204,17 @@ STITCH_ASD_V6R5_ZIP=../STIGWE/U_ASD_V6R5_STIG.zip \
 
 Set `STITCH_ASD_V6R5_CKLB=/path/to/empty.cklb` as well to compare the complete
 export with a STIG Viewer reference for that benchmark.
+
+CWE 5.0 tests include catalog and STIGWE excerpts, cover schema 7 compatibility,
+and exercise the new default mappings through database ingestion and scoring.
+To validate the complete CWE 5.0 catalog and STIGWE mappings against ASD V6R5:
+
+```bash
+STITCH_CWE_V5_ZIP=/path/to/cwec_v5.0.xml.zip \
+STITCH_ASD_V6R5_ZIP=../STIGWE/U_ASD_V6R5_STIG.zip \
+STITCH_STIGWE_YAML=../STIGWE/mappings/mappings.yaml \
+  cargo test --locked --test cwe5 full_cwe_v5_and_stigwe_catalogs -- --ignored
+```
 
 ## Copyright and License
 

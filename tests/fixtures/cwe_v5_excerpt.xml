@@ -1,0 +1,494 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Weakness_Catalog xmlns:xhtml="http://www.w3.org/1999/xhtml" Name="CWE" Version="5.0" Date="2026-10-28" xmlns="http://cwe.mitre.org/cwe-8">
+  <!--Excerpt of https://cwe.mitre.org/data/xml/cwec_v5.0.xml.zip. Retains scoring fields, descriptions, and one nested detection description; relationship targets are included with their descriptive fields only.-->
+  <Weaknesses>
+    <Weakness ID="1004" Name="Sensitive Cookie Without 'HttpOnly' Flag" Abstraction="Variant" Structure="Simple" Status="Incomplete" Diagram="/data/images/CWE-1004-Diagram.png">
+      <Description>The product uses a cookie to store sensitive information, but the cookie is not marked with the HttpOnly flag.</Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="732" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Confidentiality</Scope>
+          <Impact>Read Application Data</Impact>
+          <Note>If the HttpOnly flag is not set, then sensitive information stored in the cookie may be exposed to unintended parties.</Note>
+        </Consequence>
+        <Consequence>
+          <Scope>Integrity</Scope>
+          <Impact>Gain Privileges or Assume Identity</Impact>
+          <Note>If the cookie in question is an authentication cookie, then not setting the HttpOnly flag may allow an adversary to steal authentication data (e.g., a session ID) and assume the identity of the user.</Note>
+        </Consequence>
+      </Common_Consequences>
+      <Detection_Methods>
+        <Detection_Method Detection_Method_ID="DM-14">
+          <Method>Automated Static Analysis</Method>
+          <Description>Automated static analysis, commonly referred to as Static Application Security Testing (SAST), can find some instances of this weakness by analyzing source code (or binary/compiled code) without having to execute it. Typically, this is done by building a model of data flow and control flow, then searching for potentially-vulnerable patterns that connect "sources" (origins of input) with "sinks" (destinations where the data interacts with external components, a lower layer such as the OS, etc.)</Description>
+          <Effectiveness>High</Effectiveness>
+        </Detection_Method>
+      </Detection_Methods>
+    </Weakness>
+    <Weakness ID="1264" Name="Hardware Logic with Insecure De-Synchronization between Control and Data Channels" Abstraction="Base" Structure="Simple" Status="Incomplete">
+      <Description>The hardware logic for error handling and security checks can incorrectly forward data before the security check is complete.</Description>
+    </Weakness>
+    <Weakness ID="1461" Name="Hardware Simulation / Synthesis Mismatch" Abstraction="Base" Structure="Simple" Status="Incomplete">
+      <Description>
+		The hardware design contains structures that are interpreted
+		differently during synthesis than during simulation, which
+		cause inconsistencies in security-relevant behavior between
+		the synthesized implementation and the simulation.
+	  </Description>
+      <Extended_Description>
+        <xhtml:p>Hardware-description-language (HDL) code describes
+		functionality which can be verified as correct using
+		simulation tools. Synthesis tools then (automatically) convert
+		this into a physically-realizable representation. Certain HDL
+		code structures cannot be exactly represented, or have
+		multiple valid representations from which the synthesis tool
+		must choose. This can result in output which behaves
+		differently to the (functionally-correct) HDL code. These
+		"simulation/synthesis mismatches" may have security
+		consequences.</xhtml:p>
+      </Extended_Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="435" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Other</Scope>
+          <Impact>Varies by Context</Impact>
+          <Note>
+            <xhtml:p>The consequences depend on the affected hardware
+			behavior. The synthesized implementation may make
+			different control decisions, incorrectly update protected
+			state, expose data, or fail to enforce restrictions that
+			appeared to operate correctly during HDL
+			simulation.</xhtml:p>
+          </Note>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="1462" Name="Improper Session Management" Abstraction="Class" Structure="Simple" Status="Incomplete">
+      <Description>The product does not properly manage user-related sessions such as setting appropriate configurations and settings for sessions on creation and handling sessions throughout their lifetime.</Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="284" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+    </Weakness>
+    <Weakness ID="1463" Name="Insufficient Session Timeout Value" Abstraction="Base" Structure="Simple" Status="Incomplete">
+      <Description>The product establishes an authenticated user session, but it does not properly set a timeout for the session. That is, the timeout is set to an excessively large value or is not set at all.</Description>
+      <Technical_Nuance>
+        <xhtml:p>There are two types of session timeouts.</xhtml:p>
+        <xhtml:ul>
+          <xhtml:li>Inactivity Timeout: The time window that a session will be expired if there is no user interaction within the session.</xhtml:li>
+          <xhtml:li>Absolute Timeout: Regardless of activity, the total lifetime of a session before it is forcefully expired.</xhtml:li>
+        </xhtml:ul>
+      </Technical_Nuance>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="1462" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Access Control</Scope>
+          <Scope>Integrity</Scope>
+          <Impact>Gain Privileges or Assume Identity</Impact>
+          <Note>
+            <xhtml:p>This weakness may improve the likely success of
+	      certain attacks. For example, an attacker may intercept
+	      a session ID, possibly via a network sniffer or
+	      Cross-site Scripting attack. Although short session
+	      expiration times do not help if a stolen token is
+	      immediately used, they will protect against ongoing
+		replaying of the session ID.</xhtml:p>
+            <xhtml:p>
+		  In another scenario, a user might access a web site
+		  from a shared computer (such as at a library,
+		  Internet cafe, or open work environment), but forget
+		  to close the pages before leaving. A long expiration
+		  could allow an attacker to use the browser's back
+		  button to access web pages previously accessed by
+		  the victim.
+		</xhtml:p>
+          </Note>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="1464" Name="Improper Session Invalidation" Abstraction="Base" Structure="Simple" Status="Incomplete">
+      <Description>The product establishes a session for an authenticated user, but it does not properly invalidate or terminate the session when it is required.</Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="1462" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+    </Weakness>
+    <Weakness ID="1465" Name="Improper Session Invalidation after User Logout" Abstraction="Variant" Structure="Simple" Status="Incomplete">
+      <Description>The product provides a logout functionality or otherwise attempts to end an active session for a user, but it does not properly invalidate the session upon logout.</Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="1464" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Authentication</Scope>
+          <Impact>Gain Privileges or Assume Identity</Impact>
+          <Note>Failure to invalidate a session on log out allows an adversary who has compromised the session more time to take action on the compromised session than is necessary.</Note>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="1466" Name="Improper Session Invalidation after Authentication Credential Change" Abstraction="Variant" Structure="Simple" Status="Incomplete">
+      <Description>The product provides a capability for users to change their authentication credentials, such as username or password, but it does not properly invalidate any current authenticated sessions after this authentication credential change.</Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="1464" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Authentication</Scope>
+          <Impact>Gain Privileges or Assume Identity</Impact>
+          <Note>When a user changes their credentials, such as a password, they expect that the old password can no longer be used.  If an adversary had previously logged in with a password that was compromised, they establish a session that was authenticated with that password and it must be invalidated on password change to prevent future compromise of the account.</Note>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="1467" Name="Use of Singular Authentication Artifact for Multiple User Sessions" Abstraction="Base" Structure="Simple" Status="Incomplete">
+      <Description>The product provides an authentication artifact, such as an authentication token, for an authenticated user session, but the same artifact is used for every authenticated user session, potentially across multiple different applications.</Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="1462" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Authentication</Scope>
+          <Impact>Gain Privileges or Assume Identity</Impact>
+          <Note>If an authentication artifact is used across multiple applications or services, it allows an adversary who is able to compromise the authentication artifact to gain access to all applications or services that use that artifact.</Note>
+        </Consequence>
+        <Consequence>
+          <Scope>Availability</Scope>
+          <Impact>Other</Impact>
+          <Note>In order to revoke access to an adversary who has compromised a shared authentication artifact, that artifact must be invalidated which would affect the availability of any user who has legitimately obtained the artifact to authenticate.</Note>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="1469" Name="Improper Check for Credential Expiration" Abstraction="Base" Structure="Simple" Status="Incomplete">
+      <Description>The product receives a request that includes a credential such as a key, certificate, password, confirmation code, or token, but the product does not check whether the credential is expired.</Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="284" View_ID="1000" Ordinal="Primary" />
+        <Related_Weakness Nature="CanPrecede" CWE_ID="672" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Access Control</Scope>
+          <Scope>Confidentiality</Scope>
+          <Scope>Integrity</Scope>
+          <Impact>Gain Privileges or Assume Identity</Impact>
+          <Impact>Bypass Protection Mechanism</Impact>
+          <Note>
+            <xhtml:p>The consequences vary depending on how the credential is
+			intended for use within the product. If an attacker steals or guesses
+			the expired credential, then the attacker would have more time than
+			desired in order to conduct malicious activities.
+		   </xhtml:p>
+          </Note>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="1470" Name="Improper External Identity Verification" Abstraction="Class" Structure="Simple" Status="Incomplete">
+      <Description>
+		The product supports user accounts that include a user's external
+		identifier or communications channel - such as email, phone number,
+		social media account, or domain name - but it does not properly verify
+		that the user actually controls the associated identifier or channel.
+	  </Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="285" View_ID="1000" Ordinal="Primary" />
+        <Related_Weakness Nature="ChildOf" CWE_ID="923" View_ID="1000" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Access Control</Scope>
+          <Scope>Authentication</Scope>
+          <Impact>Gain Privileges or Assume Identity</Impact>
+          <Impact>Bypass Protection Mechanism</Impact>
+          <Note>
+            <xhtml:p>If an external identifier is controlled by an attacker, such as
+				an email address, then the attacker might be able to perform a
+				"pre-hijacking attack" against a victim who creates or recovers their
+				account.
+			</xhtml:p>
+          </Note>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="1471" Name="Insufficiently Controlled Parser Differential" Abstraction="Class" Structure="Simple" Status="Incomplete">
+      <Description>The product uses a common specification or format that is shared
+		between multiple components or entities, but the components have
+		different parsers that can interpret the same input in different,
+		security-relevant ways.
+	  </Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="436" View_ID="1000" Ordinal="Primary" />
+        <Related_Weakness Nature="CanPrecede" CWE_ID="444" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Integrity</Scope>
+          <Scope>Authorization</Scope>
+          <Scope>Access Control</Scope>
+          <Impact>Gain Privileges or Assume Identity</Impact>
+          <Impact>Bypass Protection Mechanism</Impact>
+          <Impact>Hide Activities</Impact>
+          <Impact>Alter Execution Logic</Impact>
+          <Impact>Unexpected State</Impact>
+          <Impact>Varies by Context</Impact>
+          <Note>
+            <xhtml:p>If an input is analyzed and/or processed by multiple components
+			in security-related situations - such as analyzing headers or
+			comparing identifiers - then a parser differential could lead to
+			incorrect security decisions.
+		  </xhtml:p>
+          </Note>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="1472" Name="Generation of Credential with Long Expiration" Abstraction="Base" Structure="Simple" Status="Incomplete">
+      <Description>The product generates or relies on a credential such as a key,
+		certificate, password, confirmation code, or token, but the credential
+		does not expire or has an expiration that is too long, i.e., the
+		expiration is insufficient for the intended security policy of the
+		product.
+	  </Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="284" View_ID="1000" Ordinal="Primary" />
+        <Related_Weakness Nature="ChildOf" CWE_ID="664" View_ID="1000" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Access Control</Scope>
+          <Scope>Confidentiality</Scope>
+          <Scope>Integrity</Scope>
+          <Impact>Gain Privileges or Assume Identity</Impact>
+          <Impact>Bypass Protection Mechanism</Impact>
+          <Impact>Varies by Context</Impact>
+          <Note>
+            <xhtml:p>The consequences vary depending on how the credential is
+			intended for use within the product. At the least, a long expiration
+			date gives an attacker more time to steal or guess the credential, and
+			if compromised, the attacker would have more time than desired in
+			order to conduct malicious activities.
+		  </xhtml:p>
+          </Note>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="1473" Name="Improper Expiration of Cached Data" Abstraction="Class" Structure="Simple" Status="Incomplete">
+      <Description>
+	    The product uses or supports data in a cache, but it does
+	    not properly specify an expiration with a date, time, or
+	    time period that is sufficient for the intended security
+	    policy of the product or its adminstrators.
+	  </Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="664" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Access Control</Scope>
+          <Scope>Integrity</Scope>
+          <Scope>Other</Scope>
+          <Impact>Gain Privileges or Assume Identity</Impact>
+          <Impact>Bypass Protection Mechanism</Impact>
+          <Impact>Unexpected State</Impact>
+          <Impact>Varies by Context</Impact>
+          <Note>
+            <xhtml:p>If the cached data is used for
+	      security-critical functionality such as authentication,
+	      authorization, or identity, then this might allow users
+	      or adversaries to perform operations beyond their
+	      expected lifetime. If the data is old but used for
+	      identification, such as DNS lookup results, then the
+	      stale data could point to entities that are no longer
+	      controlled by the intended owner.</xhtml:p>
+          </Note>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="1474" Name="Non-Equivalent Data Transformation" Abstraction="Class" Structure="Simple" Status="Incomplete">
+      <Description>
+	    The product parses or transforms data into another format,
+	    structure, or representation, but the newly-produced data
+	    is not semantically equivalent to the original data.
+	  </Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="664" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Integrity</Scope>
+          <Scope>Other</Scope>
+          <Impact>Bypass Protection Mechanism</Impact>
+          <Impact>Unexpected State</Impact>
+          <Impact>Varies by Context</Impact>
+          <Note>
+            <xhtml:p>The consequences vary depending on how the
+		transformed data is intended to be used. If the data
+		influences behavior of the product such as affecting
+		how a security decision is made, then this could
+		bypass an intended protection mechanism.</xhtml:p>
+          </Note>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="1475" Name="Incomplete Data/State Propagation" Abstraction="Class" Structure="Simple" Status="Incomplete">
+      <Description>The product passes control to another component
+	  or function, or it performs a state transition, but it does
+	  not provide some security-critical data/state that is needed
+	  by the receiving component/function.</Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="664" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Other</Scope>
+          <Impact>Unexpected State</Impact>
+          <Impact>Varies by Context</Impact>
+          <Note>
+            <xhtml:p>The consequences will vary depending on the
+		type of data/state that is omitted, along with the
+		functionality that the data/state supports.</xhtml:p>
+          </Note>
+        </Consequence>
+        <Consequence>
+          <Scope>Access Control</Scope>
+          <Impact>Gain Privileges or Assume Identity</Impact>
+          <Impact>Bypass Protection Mechanism</Impact>
+          <Note>
+            <xhtml:p>If the data/state is needed for a security
+		decision, such as authentication or authorization,
+		then this could allow attackers to bypass the intended
+		protection mechanism.</xhtml:p>
+          </Note>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="1476" Name="Improper Request Propagation before Data Reception in Write Transactions in a Bus Architecture" Abstraction="Base" Structure="Simple" Status="Incomplete">
+      <Description>
+	    The product uses a multi-manager shared bus architecture
+	    with an on-chip interconnect that speculatively propagates
+	    a request for a write transaction, but it does not ensure
+	    that the remaining steps required by the manager module to
+	    complete the request are fulfilled in a timely manner.
+	  </Description>
+      <Technical_Nuance>
+	    Here, the word "speculatively" refers to the fact that the
+	    interconnect propagates the request assuming that the
+	    manager will at some point provide the data, thus
+	    releasing the use of the bus.
+	  </Technical_Nuance>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="841" View_ID="1000" Ordinal="Primary" />
+        <Related_Weakness Nature="Overlaps" CWE_ID="1264" View_ID="1000" Ordinal="Primary" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence>
+          <Scope>Availability</Scope>
+          <Impact>DoS: Prevent Access</Impact>
+          <Likelihood>High</Likelihood>
+          <Note>
+            <xhtml:p>The technical impact could include
+		Memory-access delays, I/O access delays, deadline
+		miss, etc.</xhtml:p>
+            <xhtml:p>The attacker can leverage this weakness to
+		generate unbounded delays and denial of service (DoS)
+		in the access of shared resources. The system
+		interconnect might be left in an inconsistent state,
+		requiring a partial or full reset of the network,
+		according to the implementation.  The scenario may
+		play out as follows. The interconnect receives a write
+		request from a controller initiator (e.g., sending the
+		header to the interconnect for writing N words of
+		data, with N ranging from 1 to the maximum burst
+		length allowed). The interconnect then speculatively
+		propagates the request to the target peripheral
+		through the shared bus before the corresponding data
+		are received at the interconnect. Here, the word
+		"speculatively" refers to the fact that the
+		interconnect propagates the request, assuming that the
+		controller will at some point provide the data, thus
+		releasing the use of the bus.  This speculatively
+		reserves the bus to the manager transaction issuer,
+		which is left free to delay its data provisioning
+		phase.  This reserves the whole bus path between the
+		initiator and the target peripheral until all of the
+		words associated with the request are provided by the
+		controller.  If the interconnect assumes a cooperative
+		behavior from the controller, it is implicitly
+		trusting that the controller will complete the
+		transaction and release the bus for use from the other
+		controllers. A malicious, faulty, or misbehaving
+		manager module can generate a denial-of-service
+		condition in preventing access to the write data link
+		from all of the other managers in the system, and
+		unboundedly inhibit the write access to one or
+		multiple peripherals in the system (i.e., memories,
+		I/Os, etc.).</xhtml:p>
+          </Note>
+        </Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="284" Name="Improper Access Control" Abstraction="Pillar" Structure="Simple" Status="Incomplete">
+      <Description>The product does not restrict or incorrectly restricts access to a resource from an unauthorized actor.</Description>
+    </Weakness>
+    <Weakness ID="285" Name="Improper Authorization" Abstraction="Class" Structure="Simple" Status="Draft" Diagram="/data/images/CWE-285-Diagram.png">
+      <Description>The product does not perform or incorrectly performs an authorization check when an actor attempts to access a resource or perform an action.</Description>
+    </Weakness>
+    <Weakness ID="435" Name="Improper Interaction Between Multiple Correctly-Behaving Entities" Abstraction="Pillar" Structure="Simple" Status="Draft">
+      <Description>An interaction error occurs when two entities have correct behavior when running independently of each other, but when they are integrated as components in a larger system or process, they introduce incorrect behaviors that may cause resultant weaknesses.</Description>
+    </Weakness>
+    <Weakness ID="436" Name="Interpretation Conflict" Abstraction="Class" Structure="Simple" Status="Incomplete">
+      <Description>Product A handles inputs or steps differently than Product B, which causes A to perform incorrect actions based on its perception of B's state.</Description>
+    </Weakness>
+    <Weakness ID="444" Name="Inconsistent Interpretation of HTTP Requests" Abstraction="Base" Structure="Simple" Status="Incomplete">
+      <Description>The product acts as an intermediary HTTP agent
+         (such as a proxy or firewall) in the data flow between two
+         entities such as a client and server, but it does not
+         interpret malformed HTTP requests or responses in ways that
+         are consistent with how the messages will be processed by
+         those entities that are at the ultimate destination.</Description>
+    </Weakness>
+    <Weakness ID="613" Name="DEPRECATED: Insufficient Session Expiration" Abstraction="Base" Structure="Simple" Status="Deprecated">
+      <Description>This entry has been deprecated because it was insufficiently clear. Consider CWE-1462 and its descendants.</Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="672" View_ID="1003" Ordinal="Primary" />
+      </Related_Weaknesses>
+    </Weakness>
+    <Weakness ID="664" Name="Improper Control of a Resource Through its Lifetime" Abstraction="Pillar" Structure="Simple" Status="Draft">
+      <Description>The product does not maintain or incorrectly maintains control over a resource throughout its lifetime of creation, use, and release.</Description>
+    </Weakness>
+    <Weakness ID="672" Name="Operation on a Resource after Expiration or Release" Abstraction="Class" Structure="Simple" Status="Draft">
+      <Description>The product uses, accesses, or otherwise operates on a resource after that resource has been expired, released, or revoked.</Description>
+    </Weakness>
+    <Weakness ID="732" Name="Incorrect Permission Assignment for Critical Resource" Abstraction="Class" Structure="Simple" Status="Draft">
+      <Description>The product specifies permissions for a security-critical resource in a way that allows that resource to be read or modified by unintended actors.</Description>
+    </Weakness>
+    <Weakness ID="841" Name="Improper Enforcement of Behavioral Workflow" Abstraction="Class" Structure="Simple" Status="Incomplete">
+      <Description>The product supports a session in which more than one behavior must be performed by an actor, but it does not properly ensure that the actor performs the behaviors in the required sequence or timeframe.</Description>
+    </Weakness>
+    <Weakness ID="923" Name="Improper Restriction of Communication Channel to Intended Endpoints" Abstraction="Class" Structure="Simple" Status="Incomplete">
+      <Description>The product establishes a communication channel to (or from) an endpoint for privileged or protected operations, but it does not properly ensure that it is communicating with the correct endpoint.</Description>
+    </Weakness>
+    <Weakness ID="223" Name="Omission of Security-relevant Information" Abstraction="Base" Structure="Simple" Status="Draft">
+      <Description>The product does not record or display information that would be important for identifying the source or nature of an attack, or determining if an action is safe.</Description>
+    </Weakness>
+    <Weakness ID="404" Name="Improper Resource Shutdown or Release" Abstraction="Class" Structure="Simple" Status="Draft">
+      <Description>The product does not release or incorrectly releases a resource before it is made available for re-use.</Description>
+    </Weakness>
+  </Weaknesses>
+  <Groupings>
+    <Grouping ID="1451" Name="OpenSSF Secure Coding Guide for Python (2026) - 01 Introduction" Status="Stable">
+      <Summary>Weaknesses in this category are related to the rules and recommendations in section "01 Introduction" of the OpenSSF Secure Coding Guide for Python.</Summary>
+    </Grouping>
+  </Groupings>
+  <Views>
+    <View ID="1000" Name="Complete Weakness Hierarchy" Type="Graph" Status="Draft">
+      <Objective>This view has a hierarchical organization of all weaknesses within CWE. It is intended to facilitate research into weaknesses, including their inter-dependencies, and can be leveraged to systematically identify theoretical gaps within CWE. It is mainly organized according to abstractions of behaviors and other dimensions instead of how the weaknesses can be detected or mitigated, where they appear in code, or when they are introduced in the development life cycle. By design, this view is expected to include every weakness within CWE.</Objective>
+    </View>
+    <View ID="1003" Name="Weaknesses for Simplified Mapping of Published Vulnerabilities" Type="Graph" Status="Incomplete">
+      <Objective>CWE entries in this view (graph) may be used to categorize potential weaknesses within sources that handle public, third-party vulnerability information, such as the National Vulnerability Database (NVD). By design, this view is incomplete. It is limited to a small number of the most commonly-seen weaknesses, so that it is easier for humans to use. This view uses a shallow hierarchy of two levels in order to simplify the complex navigation of the entire CWE corpus.</Objective>
+    </View>
+    <View ID="1468" Name="Weaknesses Addressed by the OWASP Golang Secure Coding Practices Guide" Type="Explicit" Status="Incomplete">
+      <Objective>CWE entries in this view (slice) are fully or partially eliminated by following the guidance presented in the OWASP Golang Secure Coding Practices Guide.</Objective>
+    </View>
+  </Views>
+</Weakness_Catalog>

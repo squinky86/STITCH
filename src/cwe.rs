@@ -22,7 +22,7 @@ pub struct Weakness {
     pub name: String,
     pub abstraction: String,
     pub description: String,
-    pub category: bool, // is a category?
+    pub category: bool, // Category (schema 7) or Grouping (schema 8)
     pub view: bool,     // is a view?
     pub extended_description: String,
     pub confidentiality: bool,
@@ -79,9 +79,13 @@ async fn cwe_parse_and_populate_database(
         .await
         .context("Failed to read XML file")?;
 
-    let (cwe_entries, relationships) = parse_cwe_xml(&xml_content, args.verbose)?;
-    cwe_insert_data_to_database(conn, &cwe_entries, &relationships)?;
-    Ok(())
+    import_cwe_xml(&xml_content, conn, args.verbose)
+}
+
+/// Import a CWE catalog in schema 7.x or 8.x format.
+pub fn import_cwe_xml(xml_content: &str, conn: &Connection, verbose: bool) -> Result<()> {
+    let (cwe_entries, relationships) = parse_cwe_xml(xml_content, verbose)?;
+    cwe_insert_data_to_database(conn, &cwe_entries, &relationships)
 }
 
 /// Parses a CWE XML document string into in-memory `Weakness` and `WeaknessRelationship` rows.
@@ -93,7 +97,9 @@ pub fn parse_cwe_xml(
     verbose: bool,
 ) -> Result<(Vec<Weakness>, Vec<WeaknessRelationship>)> {
     let mut reader = Reader::from_str(xml_content);
-    reader.config_mut().trim_text(true);
+    // Preserve spaces around inline XHTML and entity references. Empty elements
+    // follow the same path tracking and closing logic as nonempty elements.
+    reader.config_mut().expand_empty_elements = true;
 
     let mut buf = Vec::new();
     let mut cwe_entries: Vec<Weakness> = Vec::new();
@@ -101,7 +107,7 @@ pub fn parse_cwe_xml(
 
     let mut current_weakness: Option<Weakness> = None;
     let mut text_buffer = String::new();
-    let mut current_element = String::new();
+    let mut element_path: Vec<String> = Vec::new();
     let mut capture_text = false;
 
     let mut has_other: bool = false;
@@ -109,13 +115,14 @@ pub fn parse_cwe_xml(
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e) | Event::Empty(ref e)) => {
-                current_element = e.name().as_ref().to_owned();
+            Ok(Event::Start(ref e)) => {
+                let current_element = e.local_name().as_ref().to_owned();
+                element_path.push(current_element.clone());
 
                 match current_element.as_str() {
-                    "Weakness" | "Category" | "View" => {
+                    "Weakness" | "Category" | "Grouping" | "View" if element_path.len() == 3 => {
                         let mut weakness = Weakness::default();
-                        if current_element == "Category" {
+                        if matches!(current_element.as_str(), "Category" | "Grouping") {
                             weakness.category = true;
                         }
                         if current_element == "View" {
@@ -133,17 +140,33 @@ pub fn parse_cwe_xml(
                                     weakness.abstraction = value.to_string();
                                 }
                                 "ID" => weakness.id = value.parse::<u32>().unwrap_or(0),
-                                "Name" => weakness.name = value.to_string(),
+                                "Name" => {
+                                    weakness.name = quick_xml::escape::unescape(value)?.into_owned()
+                                }
                                 _ => {}
                             }
                         }
                         current_weakness = Some(weakness);
                     }
-                    "Description" | "Extended_Description" | "Scope" | "Impact" => {
+                    // Only entry-level prose belongs in the description fields;
+                    // detection methods and mitigations have their own Description.
+                    "Description" | "Extended_Description" | "Summary" | "Objective"
+                        if current_weakness.is_some() && element_path.len() == 4 =>
+                    {
                         capture_text = true;
                         text_buffer.clear();
                     }
-                    "Related_Weakness" => {
+                    "Scope" | "Impact"
+                        if element_path.len() == 6
+                            && element_path[3] == "Common_Consequences"
+                            && element_path[4] == "Consequence" =>
+                    {
+                        capture_text = true;
+                        text_buffer.clear();
+                    }
+                    "Related_Weakness"
+                        if element_path.len() == 5 && element_path[3] == "Related_Weaknesses" =>
+                    {
                         if let Some(weakness) = &current_weakness {
                             let mut relationship = WeaknessRelationship {
                                 source_id: weakness.id,
@@ -180,23 +203,26 @@ pub fn parse_cwe_xml(
             Ok(Event::Text(e)) if capture_text => {
                 text_buffer.push_str(&e.xml10_content());
             }
+            Ok(Event::CData(e)) if capture_text => {
+                text_buffer.push_str(&e.xml10_content());
+            }
+            Ok(Event::GeneralRef(e)) if capture_text => {
+                text_buffer.push_str(&quick_xml::escape::unescape(&format!("&{};", e.as_ref()))?);
+            }
             Ok(Event::End(ref e)) => {
-                let tag_name = e.name().as_ref().to_owned();
+                let tag_name = e.local_name().as_ref().to_owned();
                 match tag_name.as_str() {
-                    "Weakness" | "Category" | "View" => {
+                    "Weakness" | "Category" | "Grouping" | "View" if element_path.len() == 3 => {
                         if let Some(mut weakness) = current_weakness.take() {
                             if verbose {
                                 p(format!("Parsed: CWE-{}", weakness.id).as_str(), true);
                             }
-                            //If it is a class not mapped to any impact, assume it maps to all impacts.
-                            //Only apply this fallback if no scope was defined at all;
-                            //CWEs that explicitly list non-CIA scopes (e.g., "Other") are intentionally without CIA impact.
-                            if weakness.abstraction == "Class"
-                                && !weakness.confidentiality
-                                && !weakness.integrity
-                                && !weakness.availability
-                                && !has_scope
-                            {
+                            // Missing scopes mean unknown impact, regardless of
+                            // abstraction (e.g. CWE-1464 is a Base in CWE 5.0).
+                            // Let the CVE evidence determine each impact instead
+                            // of forcing it to NONE. Explicit non-CIA scopes still
+                            // retain their declared meaning.
+                            if !weakness.category && !weakness.view && !has_scope {
                                 weakness.confidentiality = true;
                                 weakness.integrity = true;
                                 weakness.availability = true;
@@ -206,19 +232,21 @@ pub fn parse_cwe_xml(
                             has_scope = false;
                         }
                     }
-                    "Description" => {
+                    "Description" | "Summary" | "Objective" if element_path.len() == 4 => {
                         if let Some(weakness) = current_weakness.as_mut() {
-                            weakness.description = text_buffer.trim().to_string();
+                            weakness.description =
+                                text_buffer.split_whitespace().collect::<Vec<_>>().join(" ");
                         }
                         capture_text = false;
                     }
-                    "Extended_Description" => {
+                    "Extended_Description" if element_path.len() == 4 => {
                         if let Some(weakness) = current_weakness.as_mut() {
-                            weakness.extended_description = text_buffer.trim().to_string();
+                            weakness.extended_description =
+                                text_buffer.split_whitespace().collect::<Vec<_>>().join(" ");
                         }
                         capture_text = false;
                     }
-                    "Scope" => {
+                    "Scope" if capture_text && element_path.len() == 6 => {
                         has_scope = true;
                         if let Some(weakness) = current_weakness.as_mut() {
                             match text_buffer.trim() {
@@ -242,7 +270,7 @@ pub fn parse_cwe_xml(
                         }
                         capture_text = false;
                     }
-                    "Impact" => {
+                    "Impact" if capture_text && element_path.len() == 6 => {
                         if let Some(weakness) = current_weakness.as_mut()
                             && has_other
                             && text_buffer.trim() == "Varies by Context"
@@ -251,12 +279,16 @@ pub fn parse_cwe_xml(
                             weakness.integrity = true;
                             weakness.availability = true;
                         }
-                        has_other = false;
                         capture_text = false;
+                    }
+                    "Consequence"
+                        if element_path.len() == 5 && element_path[3] == "Common_Consequences" =>
+                    {
+                        has_other = false;
                     }
                     _ => {}
                 }
-                current_element.clear();
+                element_path.pop();
             }
             Ok(Event::Eof) => break,
             Err(e) => return Err(anyhow::anyhow!("XML parsing error: {e}")),
@@ -462,6 +494,103 @@ mod tests {
         assert_eq!(r.target_id, 100);
         assert_eq!(r.nature, "ChildOf");
         assert_eq!(r.view_id, 1000);
+    }
+
+    #[test]
+    fn cwe_v5_preserves_groupings_and_new_weaknesses() {
+        let (entries, relationships) = parse(include_str!("../tests/fixtures/cwe_v5_excerpt.xml"));
+        let grouping = find(&entries, 1451);
+        assert!(grouping.category && !grouping.view);
+        assert!(!grouping.description.is_empty());
+        assert!(find(&entries, 1468).view);
+        assert!(find(&entries, 613).name.starts_with("DEPRECATED:"));
+        let session = find(&entries, 1462);
+        assert!(session.confidentiality && session.integrity && session.availability);
+        let invalidation = find(&entries, 1464);
+        assert!(
+            invalidation.confidentiality && invalidation.integrity && invalidation.availability
+        );
+        let timeout = find(&entries, 1463);
+        assert!(timeout.confidentiality && timeout.integrity && !timeout.availability);
+        let bus = find(&entries, 1476);
+        assert!(!bus.confidentiality && !bus.integrity && bus.availability);
+        assert!(relationships.iter().any(|r| r.source_id == 1476
+            && r.target_id == 1264
+            && r.nature == "Overlaps"
+            && r.view_id == 1000));
+    }
+
+    #[test]
+    fn nested_descriptions_do_not_replace_the_weakness_description() {
+        let (entries, _) = parse(include_str!("../tests/fixtures/cwe_v5_excerpt.xml"));
+        assert_eq!(
+            find(&entries, 1004).description,
+            "The product uses a cookie to store sensitive information, but the cookie is not marked with the HttpOnly flag."
+        );
+    }
+
+    #[test]
+    fn legacy_categories_and_rich_text_are_preserved() {
+        let (entries, _) = parse(
+            r#"<Weakness_Catalog xmlns:xhtml="http://www.w3.org/1999/xhtml">
+          <Categories><Category ID="1" Name="A &amp; B">
+            <Summary>A <xhtml:b>category</xhtml:b> &amp; summary.</Summary>
+          </Category></Categories>
+          <Weaknesses><Weakness ID="2" Name="Example" Abstraction="Base">
+            <Description>A <xhtml:b>weakness</xhtml:b> &amp; &#x41;<![CDATA[<B>]]>.</Description>
+            <Extended_Description><xhtml:p>More details.</xhtml:p></Extended_Description>
+          </Weakness></Weaknesses>
+        </Weakness_Catalog>"#,
+        );
+        assert!(find(&entries, 1).category);
+        assert_eq!(find(&entries, 1).name, "A & B");
+        assert_eq!(find(&entries, 1).description, "A category & summary.");
+        assert_eq!(find(&entries, 2).description, "A weakness & A<B>.");
+        assert_eq!(find(&entries, 2).extended_description, "More details.");
+    }
+
+    #[test]
+    fn other_scope_applies_to_all_impacts_in_only_its_consequence() {
+        let (entries, _) = parse(
+            r#"<Weakness_Catalog><Weaknesses>
+          <Weakness ID="1" Name="Multiple impacts" Abstraction="Base"><Common_Consequences>
+            <Consequence><Scope>Other</Scope><Impact>Unexpected State</Impact><Impact>Varies by Context</Impact></Consequence>
+          </Common_Consequences></Weakness>
+          <Weakness ID="2" Name="Separate consequences" Abstraction="Base"><Common_Consequences>
+            <Consequence><Scope>Other</Scope></Consequence>
+            <Consequence><Scope>Integrity</Scope><Impact>Varies by Context</Impact></Consequence>
+          </Common_Consequences></Weakness>
+        </Weaknesses></Weakness_Catalog>"#,
+        );
+        let all = find(&entries, 1);
+        assert!(all.confidentiality && all.integrity && all.availability);
+        let integrity = find(&entries, 2);
+        assert!(!integrity.confidentiality && integrity.integrity && !integrity.availability);
+    }
+
+    #[test]
+    fn missing_scopes_allow_cve_impacts_but_explicit_other_does_not() {
+        let (entries, _) = parse(
+            r#"<Weakness_Catalog>
+          <Weaknesses>
+            <Weakness ID="1" Name="Base without scopes" Abstraction="Base" />
+            <Weakness ID="2" Name="Variant without scopes" Abstraction="Variant"><Common_Consequences /></Weakness>
+            <Weakness ID="3" Name="Explicit other" Abstraction="Class"><Common_Consequences>
+              <Consequence><Scope>Other</Scope><Impact>Reduce Reliability</Impact></Consequence>
+            </Common_Consequences></Weakness>
+          </Weaknesses>
+          <Groupings><Grouping ID="4" Name="Grouping" /></Groupings>
+          <Views><View ID="5" Name="View" /></Views>
+        </Weakness_Catalog>"#,
+        );
+        for id in [1, 2] {
+            let w = find(&entries, id);
+            assert!(w.confidentiality && w.integrity && w.availability);
+        }
+        for id in [3, 4, 5] {
+            let w = find(&entries, id);
+            assert!(!w.confidentiality && !w.integrity && !w.availability);
+        }
     }
 
     #[test]
