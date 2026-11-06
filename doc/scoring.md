@@ -153,7 +153,13 @@ Estimating a score is done by CWE. For a given CWE, the closest associated CVEs 
 
 ### 4.2.1 Finding Associated CVEs
 
-Each round in this process is composed of varying steps. After each round, if at least five CVEs (defined as `MINIMUM_CVES_TO_SCORE = 5`) are associated with the CWEs, the results are calculated, and the subsequent rounds are not performed. If there are not at least five unique CVEs after a round, the next round is performed. During a round, there are multiple steps. If after a step there are at least 50 CVEs (defined as `MINIMUM_CVES_TO_COMPLETE_ROUND = 50`) identified, the subsequent steps are not performed.
+Each round in this process is composed of varying steps. After each round, if at least five unique CVEs (defined as `MINIMUM_CVES_TO_SCORE = 5`) are associated with the CWEs, the results are calculated, and the subsequent rounds are not performed. If there are not at least five unique CVEs after a round, the next round is performed. During a round, there are multiple steps. If after a step there are at least 50 unique CVEs (defined as `MINIMUM_CVES_TO_COMPLETE_ROUND = 50`) identified, the subsequent steps are not performed.
+
+Evidence is deduplicated by CVE identifier as it is collected, across all CWEs,
+versions, steps, and rounds. A CVE mapped to multiple weaknesses contributes
+only once to thresholds, modes, and categorical means. Different CVEs with
+identical metrics remain separate observations. The starting CWE is marked as
+processed after Round 1 so cycles and sibling traversal cannot revisit it.
 
 #### 4.2.1.1 Round 1: Direct CVEs
 

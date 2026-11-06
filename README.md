@@ -108,6 +108,12 @@ the completion and source-provenance metadata.
 CSV output uses standard quoting and prefixes cells that spreadsheet programs
 could otherwise interpret as formulas.
 
+CWE scoring counts each CVE identifier once across direct, descendant, and
+ancestor/cousin evidence. Both the five-CVE scoring minimum and the 50-CVE
+step cutoff use unique CVEs, and each CVE has equal weight in the estimated
+metrics. This behavior is in `stitch-score`; existing databases do not need a
+rebuild to benefit from it.
+
 CKLB exports use the benchmark and rule metadata stored in the database. Rebuild
 existing databases with the updated `stitch` before exporting V6R5 checklists;
 upgrading `stitch-score` alone does not update benchmark content. The current

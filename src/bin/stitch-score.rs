@@ -21,13 +21,41 @@ use std::{
 };
 use uuid::Uuid;
 
-/// Minimum number of CVEs that must be associated with a CWE before a score
+/// Minimum number of unique CVEs that must be associated with a CWE before a score
 /// is emitted. Below this, no score is produced. See `doc/scoring.md` §4.2.1.
 const MINIMUM_CVES_TO_SCORE: usize = 5;
 
 /// Minimum CVE pool size that lets a step short-circuit further data-gathering
 /// within the current round. See `doc/scoring.md` §4.2.1.
 const MINIMUM_CVES_TO_COMPLETE_ROUND: usize = 50;
+
+/// One record per CVE across every scoring round. Deduplicate on insertion so
+/// both threshold checks and metric aggregation use the same unique evidence.
+#[derive(Default)]
+struct CvePool {
+    ids: HashSet<String>,
+    records: Vec<CvssDataV40>,
+}
+
+impl CvePool {
+    fn extend(&mut self, records: impl IntoIterator<Item = CvssDataV40>) {
+        for record in records {
+            // get_cve_data_by_weakness stores the database's unique NVDId in
+            // vector_string for evidence records; this is not a CVSS vector.
+            if self.ids.insert(record.vector_string.clone()) {
+                self.records.push(record);
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    fn iter(&self) -> std::slice::Iter<'_, CvssDataV40> {
+        self.records.iter()
+    }
+}
 
 fn spreadsheet_safe(value: &str) -> String {
     let dangerous = value
@@ -1407,7 +1435,8 @@ fn score_from(conn: &Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> 
     // ROUND 1.1: Direct CVSS 4.0 scores
     // Find direct instances of this CWE in the Vulnerability table
 
-    let mut cves: Vec<CvssDataV40> = get_cve_data_by_weakness(conn, 4, cwe_data_flatened.id)?;
+    let mut cves = CvePool::default();
+    cves.extend(get_cve_data_by_weakness(conn, 4, cwe_data_flatened.id)?);
 
     if args.verbose {
         println!("1.1: Found {} CVSS 4.0 CVEs.", cves.len());
@@ -1432,7 +1461,9 @@ fn score_from(conn: &Connection, mut cwe_data: Vec<CWEDetails>, args: &Args) -> 
         cves.extend(tmp_cves);
     }
 
-    let mut processed_cwes: HashSet<u32> = HashSet::new();
+    // Round 1 already consumed the starting CWE. Do not revisit it through a
+    // cycle or as its own sibling when traversing the ancestor generations.
+    let mut processed_cwes = HashSet::from([cwe_data_flatened.id]);
 
     // ROUND 2: Progeny CWEs of View 1000
     // Iterate one generation at a time until there are enough CVEs to score.
