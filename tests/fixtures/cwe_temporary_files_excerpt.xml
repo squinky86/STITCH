@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Weakness_Catalog Name="CWE" Version="5.0" Date="2026-10-28" xmlns="http://cwe.mitre.org/cwe-8">
+  <!-- CWE 5.0 excerpt: preserve the disconnected temporary-file branch exactly
+       as published; STITCH's additional parents must come from the importer. -->
+  <Weaknesses>
+    <Weakness ID="377" Name="DEPRECATED: Insecure Temporary File" Abstraction="Class" Status="Deprecated">
+      <Description>This entry has been deprecated. It was focused only on the affected resource (temporary file) and not the behavior or mistake that produced the insecure temporary file, which caused confusion and incorrect mappings.</Description>
+    </Weakness>
+    <Weakness ID="378" Name="Creation of Temporary File With Insecure Permissions" Abstraction="Base">
+      <Description>Opening temporary files without appropriate measures or controls can leave the file, its contents and any function that it impacts vulnerable to attack.</Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="377" View_ID="1000" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence><Scope>Confidentiality</Scope><Impact>Read Application Data</Impact></Consequence>
+        <Consequence><Scope>Authorization</Scope><Scope>Other</Scope><Impact>Other</Impact></Consequence>
+        <Consequence><Scope>Integrity</Scope><Scope>Other</Scope><Impact>Other</Impact></Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="379" Name="Creation of Temporary File in Directory with Insecure Permissions" Abstraction="Base">
+      <Description>The product creates a temporary file in a directory whose permissions allow unintended actors to determine the file's existence or otherwise access that file.</Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="377" View_ID="1000" />
+      </Related_Weaknesses>
+      <Common_Consequences>
+        <Consequence><Scope>Confidentiality</Scope><Impact>Read Application Data</Impact></Consequence>
+      </Common_Consequences>
+    </Weakness>
+    <Weakness ID="664" Name="Improper Control of a Resource Through its Lifetime" Abstraction="Pillar" />
+    <Weakness ID="668" Name="Exposure of Resource to Wrong Sphere" Abstraction="Class">
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="664" View_ID="1000" />
+      </Related_Weaknesses>
+    </Weakness>
+  </Weaknesses>
+  <Views><View ID="1000" Name="Complete Weakness Hierarchy" /></Views>
+</Weakness_Catalog>

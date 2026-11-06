@@ -85,6 +85,15 @@ Weakness relationships retain their declared nature. The ancestry traversal in
 Section 4.2.1 uses only `ChildOf` relationships within View 1000; `Overlaps`,
 `PeerOf`, and other relationship types do not establish parent/child links.
 
+Local ancestry overrides repair CWE-378 and CWE-379 in CWE 5.0. For each
+weakness independently, when its sole View-1000 `ChildOf` parent is the
+deprecated CWE-377, STITCH adds a `ChildOf` relationship to CWE-668 in View
+1000, preserving the original relationship. Both endpoints must be active
+weaknesses and View 1000 must exist. This restores their former grandparent as
+a scoring parent and defers to a different ancestry supplied by a future catalog.
+See [Manual CWE overrides](../README.md#manual-cwe-overrides) for the rationale
+and the related missing-scope fallback for CWE-1464.
+
 Modifications to the CWE data are made such that CWEs with an `Other` scope and a `Varies by Context` impact are assumed to be able to impact all three factors of Confidentiality, Integrity, and Availability. Additionally, weaknesses for which no scope at all is defined in the source data are allowed to impact all three, regardless of abstraction. This lets the associated CVE evidence determine the impact values rather than treating missing catalog data as evidence of no impact. This fallback was previously limited to Class-abstraction weaknesses; CWE 5.0 also omits scopes for the Base-abstraction CWE-1464. Explicitly listed scopes retain their meaning. Additional scope-to-impact rules are applied:
 
 * CWEs whose scope is `Authentication` or `Authorization` affect Confidentiality, Integrity, and Availability.

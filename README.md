@@ -38,9 +38,9 @@ Schema 8 `Grouping` entries use the existing database `category` flag and are
 excluded from scoring, as are legacy categories, views, and deprecated entries.
 Parent/child scoring traversal follows only `ChildOf` relationships in View
 1000; relationships such as `Overlaps` are stored but do not establish ancestry.
-Weaknesses with no declared impact scopes use their CVE-derived impacts,
-regardless of abstraction. This extends the previous Class-only fallback to
-cover incomplete Base entries such as CWE-1464, avoiding a false zero score.
+The [manual CWE overrides](#manual-cwe-overrides) repair the disconnected
+ancestry of CWE-378 and CWE-379 and allow CVE-derived impacts for missing scopes
+such as CWE-1464's.
 
 Rebuild existing databases to pick up CWE 5.0 and the updated STIGWE defaults.
 For example, `SV-222389` now maps to `CWE-1463` instead of the deprecated
@@ -133,6 +133,53 @@ Release: 5** is stored in separate CKLB fields, as in STIG Viewer:
 
 `stig_name` retains the full official title, `Application Security and Development
 Security Technical Implementation Guide`.
+
+## Manual CWE overrides
+
+STITCH applies the following local corrections when importing CWE data. These
+are STITCH scoring decisions, not relationships or impact declarations supplied
+by MITRE. Rebuild the database with the updated builder to apply them; updating
+only `stitch-score` does not change an existing database.
+
+### CWE-378 and CWE-379: restore the scoring ancestry
+
+[CWE-378 — Creation of Temporary File With Insecure Permissions](https://cwe.mitre.org/data/definitions/378.html)
+and
+[CWE-379 — Creation of Temporary File in Directory with Insecure Permissions](https://cwe.mitre.org/data/definitions/379.html)
+still point to CWE-377 in CWE 5.0, although that release deprecated CWE-377 and
+removed its parent relationships. This disconnects both weaknesses from the
+ancestor CVEs used to estimate their scores. In the October 29, 2026 database,
+their direct CVE mappings are all secondary and therefore excluded by the
+scoring policy.
+
+STITCH adds `CWE-378 ChildOf CWE-668` and `CWE-379 ChildOf CWE-668` in View 1000,
+retaining their original relationships to CWE-377. CWE-668, "Exposure of
+Resource to Wrong Sphere," was their former grandparent and covers exposing
+a temporary file through insecure file permissions (CWE-378) or directory
+permissions (CWE-379). Both become children of CWE-668 under CWE-664.
+
+Each override applies independently, only when that weakness's sole View-1000
+`ChildOf` parent is the deprecated CWE-377, the weakness and CWE-668 are active,
+and View 1000 is present. An existing edge is not duplicated, and a different
+ancestry supplied by the source catalog takes precedence. The primary-CVE
+filter, five-CVE minimum, and each weakness's declared impact scopes remain
+in effect.
+
+### CWE-1464: preserve impacts when the catalog omits scopes
+
+[CWE-1464 — Improper Session Invalidation](https://cwe.mitre.org/data/definitions/1464.html)
+is a Base weakness whose CWE 5.0 entry declares no impact scopes. Treating that
+omission as no Confidentiality, Integrity, or Availability impact produced a
+false zero score.
+
+STITCH allows all three impact dimensions for any weakness with **no declared
+scopes**, then derives their values from the selected CVEs. This generalizes
+the earlier Class-only fallback to include CWE-1464; it does not assign a fixed
+score or force high impacts. Explicitly declared scopes retain their meaning,
+and categories/groupings and views do not receive this fallback. A weakness
+still needs enough qualifying CVEs to receive a vector.
+
+The implementation and regression tests are in `src/cwe.rs` and `tests/cwe5.rs`.
 
 ## Data integrity
 

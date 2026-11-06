@@ -310,7 +310,62 @@ pub fn parse_cwe_xml(
         }
     }
 
+    apply_temporary_file_parent_overrides(&cwe_entries, &mut relationships, verbose);
+
     Ok((cwe_entries, relationships))
+}
+
+fn apply_temporary_file_parent_overrides(
+    entries: &[Weakness],
+    relationships: &mut Vec<WeaknessRelationship>,
+    verbose: bool,
+) {
+    // CWE 5.0 deprecated CWE-377 and removed its ancestry, but left CWE-378
+    // and CWE-379 attached to it. Restore their former grandparent locally.
+    // Keep the source relationship and defer to any upstream parent correction.
+    // See README.md's "Manual CWE overrides" section.
+    let active_weakness = |id| {
+        entries.iter().any(|entry| {
+            entry.id == id
+                && !entry.category
+                && !entry.view
+                && !entry.name.starts_with("DEPRECATED")
+        })
+    };
+    if !active_weakness(668)
+        || !entries.iter().any(|entry| entry.id == 1000 && entry.view)
+        || !entries
+            .iter()
+            .any(|entry| entry.id == 377 && entry.name.starts_with("DEPRECATED"))
+    {
+        return;
+    }
+    for source_id in [378, 379] {
+        if !active_weakness(source_id) {
+            continue;
+        }
+        let mut parents = relationships.iter().filter(|relationship| {
+            relationship.source_id == source_id
+                && relationship.view_id == 1000
+                && relationship.nature == "ChildOf"
+        });
+        if parents.next().is_none_or(|parent| parent.target_id != 377) || parents.next().is_some() {
+            continue;
+        }
+
+        relationships.push(WeaknessRelationship {
+            source_id,
+            target_id: 668,
+            nature: "ChildOf".to_string(),
+            view_id: 1000,
+        });
+        if verbose {
+            p(
+                &format!("Applied manual CWE-{source_id} ChildOf CWE-668 override (View 1000)."),
+                true,
+            );
+        }
+    }
 }
 
 // Chunk sizes chosen to stay well under SQLite's default 32766 host-parameter
@@ -518,6 +573,86 @@ mod tests {
             && r.target_id == 1264
             && r.nature == "Overlaps"
             && r.view_id == 1000));
+    }
+
+    #[test]
+    fn temporary_file_overrides_preserve_source_edges_and_impacts() {
+        let (entries, mut relationships) = parse(include_str!(
+            "../tests/fixtures/cwe_temporary_files_excerpt.xml"
+        ));
+        let parents = |relationships: &[WeaknessRelationship], id| {
+            relationships
+                .iter()
+                .filter(|r| r.source_id == id && r.nature == "ChildOf" && r.view_id == 1000)
+                .map(|r| r.target_id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(parents(&relationships, 379), vec![377, 668]);
+        assert_eq!(parents(&relationships, 378), vec![377, 668]);
+        let cwe = find(&entries, 378);
+        assert!(cwe.confidentiality && cwe.integrity && cwe.availability);
+        let cwe = find(&entries, 379);
+        assert!(cwe.confidentiality && !cwe.integrity && !cwe.availability);
+        apply_temporary_file_parent_overrides(&entries, &mut relationships, false);
+        for id in [378, 379] {
+            assert_eq!(parents(&relationships, id), vec![377, 668]);
+        }
+    }
+
+    #[test]
+    fn temporary_file_overrides_defer_to_catalog_changes_and_partial_catalogs() {
+        let xml = include_str!("../tests/fixtures/cwe_temporary_files_excerpt.xml");
+        for source_id in [378, 379] {
+            for changed in [
+                xml.replace(
+                    "DEPRECATED: Insecure Temporary File",
+                    "Insecure Temporary File",
+                ),
+                xml.replace("CWE_ID=\"377\"", "CWE_ID=\"664\""),
+                xml.replace(&format!("ID=\"{source_id}\""), "ID=\"999\""),
+                xml.replace("ID=\"668\"", "ID=\"999\""),
+                xml.replace("<View ID=\"1000\"", "<View ID=\"999\""),
+                xml.replace(
+                    "Nature=\"ChildOf\" CWE_ID=\"377\"",
+                    "Nature=\"Overlaps\" CWE_ID=\"377\"",
+                ),
+                xml.replace(
+                    &format!("ID=\"{source_id}\" Name=\""),
+                    &format!("ID=\"{source_id}\" Name=\"DEPRECATED: "),
+                ),
+                xml.replace(
+                    "Name=\"Exposure of Resource",
+                    "Name=\"DEPRECATED: Exposure of Resource",
+                ),
+                xml.replace(
+                    "<Related_Weakness Nature=\"ChildOf\" CWE_ID=\"377\" View_ID=\"1000\" />",
+                    "<Related_Weakness Nature=\"ChildOf\" CWE_ID=\"377\" View_ID=\"1000\" />\
+                 <Related_Weakness Nature=\"ChildOf\" CWE_ID=\"664\" View_ID=\"1000\" />",
+                ),
+            ] {
+                let (_, relationships) = parse(&changed);
+                assert!(
+                    !relationships
+                        .iter()
+                        .any(|r| r.source_id == source_id && r.target_id == 668),
+                    "override should not apply to {changed}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn temporary_file_parent_overrides_apply_independently() {
+        let xml = include_str!("../tests/fixtures/cwe_temporary_files_excerpt.xml");
+        for missing in [378, 379] {
+            let changed = xml.replace(&format!("ID=\"{missing}\""), "ID=\"999\"");
+            let (_, relationships) = parse(&changed);
+            let other = if missing == 378 { 379 } else { 378 };
+            assert!(relationships.iter().any(|r| r.source_id == other
+                && r.target_id == 668
+                && r.nature == "ChildOf"
+                && r.view_id == 1000));
+        }
     }
 
     #[test]

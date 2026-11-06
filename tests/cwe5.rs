@@ -89,40 +89,7 @@ fn score(db: &Path, identifier: &str, verbose: bool) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
-#[test]
-fn cwe_v5_mappings_and_scoring_work_together() {
-    let dir = tempfile::tempdir().unwrap();
-    let db = dir.path().join("cwe5.db");
-    let build = create_database(db.to_str().unwrap()).unwrap();
-    let conn = build.connection();
-    import_cwe_xml(include_str!("fixtures/cwe_v5_excerpt.xml"), conn, false).unwrap();
-
-    conn.execute_batch("INSERT INTO STIG (id, title) VALUES (1, 'Fixture');
-        INSERT INTO RMFFamily (id, abbr, name) VALUES (1, 'AC', 'Fixture');
-        INSERT INTO RMFControl (id, RMFFamilyId, number, name, description) VALUES (1, 1, 'AC-12', 'Fixture', 'Fixture');
-        INSERT INTO RMFCCI (id, RMFControlId, definition) VALUES (1, 1, 'Fixture');").unwrap();
-    let stigs: BTreeSet<_> = NEW_CWE_DEFAULTS
-        .iter()
-        .map(|(_, stig)| stig)
-        .chain(CHANGED_STIG_DEFAULTS.iter().map(|(stig, _)| stig))
-        .collect();
-    for stig in stigs {
-        conn.execute(
-            "INSERT INTO STIGCheck (STIGId, DISAId, Severity) VALUES (1, ?1, 'medium')",
-            [format!("{stig}r1_rule")],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO MapSTIGCheckCCI (STIGCheckId, CCIId) VALUES (?1, 1)",
-            [conn.last_insert_rowid()],
-        )
-        .unwrap();
-    }
-    import_stigwe_yaml(include_str!("fixtures/stigwe_cwe_v5_excerpt.yaml"), conn).unwrap();
-    check_defaults(conn);
-
-    // Five synthetic CVEs on the new session-management class exercise ancestor
-    // fallback for CWE-1463 and its STIG, without depending on NVD's live scores.
+fn insert_scored_cves(conn: &Connection, weakness_id: u32) {
     let columns: Vec<String> = conn
         .prepare("SELECT name FROM pragma_table_info('Vulnerability') WHERE type = 'TEXT'")
         .unwrap()
@@ -159,11 +126,48 @@ fn cwe_v5_mappings_and_scoring_work_together() {
         conn.execute(&sql, rusqlite::params_from_iter(values))
             .unwrap();
         conn.execute(
-            "INSERT INTO MapVulnerabilityWeakness (VulnerabilityId, WeaknessId) VALUES (?1, 1462)",
+            "INSERT INTO MapVulnerabilityWeakness (VulnerabilityId, WeaknessId) VALUES (?1, ?2)",
+            params![conn.last_insert_rowid(), weakness_id],
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn cwe_v5_mappings_and_scoring_work_together() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("cwe5.db");
+    let build = create_database(db.to_str().unwrap()).unwrap();
+    let conn = build.connection();
+    import_cwe_xml(include_str!("fixtures/cwe_v5_excerpt.xml"), conn, false).unwrap();
+
+    conn.execute_batch("INSERT INTO STIG (id, title) VALUES (1, 'Fixture');
+        INSERT INTO RMFFamily (id, abbr, name) VALUES (1, 'AC', 'Fixture');
+        INSERT INTO RMFControl (id, RMFFamilyId, number, name, description) VALUES (1, 1, 'AC-12', 'Fixture', 'Fixture');
+        INSERT INTO RMFCCI (id, RMFControlId, definition) VALUES (1, 1, 'Fixture');").unwrap();
+    let stigs: BTreeSet<_> = NEW_CWE_DEFAULTS
+        .iter()
+        .map(|(_, stig)| stig)
+        .chain(CHANGED_STIG_DEFAULTS.iter().map(|(stig, _)| stig))
+        .collect();
+    for stig in stigs {
+        conn.execute(
+            "INSERT INTO STIGCheck (STIGId, DISAId, Severity) VALUES (1, ?1, 'medium')",
+            [format!("{stig}r1_rule")],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO MapSTIGCheckCCI (STIGCheckId, CCIId) VALUES (?1, 1)",
             [conn.last_insert_rowid()],
         )
         .unwrap();
     }
+    import_stigwe_yaml(include_str!("fixtures/stigwe_cwe_v5_excerpt.yaml"), conn).unwrap();
+    check_defaults(conn);
+
+    // Five synthetic CVEs on the new session-management class exercise ancestor
+    // fallback for CWE-1463 and its STIG, without depending on NVD's live scores.
+    insert_scored_cves(conn, 1462);
     // Give non-scoreable entries a mapping so the CLI reaches its type checks.
     conn.execute("UPDATE Weakness SET STIGCheckId = (SELECT STIGCheckId FROM Weakness WHERE id = 1463) WHERE id IN (613, 1451, 1468)", []).unwrap();
     build.publish().unwrap();
@@ -204,6 +208,85 @@ fn cwe_v5_mappings_and_scoring_work_together() {
     assert!(score(&db, "CWE-1468", true).contains("Views cannot be scored."));
 }
 
+#[test]
+fn cwe_379_override_restores_scoring_through_its_former_grandparent() {
+    check_temporary_file_override(
+        379,
+        "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+    );
+}
+
+#[test]
+fn cwe_378_override_restores_scoring_through_its_former_grandparent() {
+    check_temporary_file_override(
+        378,
+        "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+    );
+}
+
+fn check_temporary_file_override(cwe: u32, expected_vector: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("temporary-files.db");
+    let build = create_database(db.to_str().unwrap()).unwrap();
+    let conn = build.connection();
+    import_cwe_xml(
+        include_str!("fixtures/cwe_temporary_files_excerpt.xml"),
+        conn,
+        false,
+    )
+    .unwrap();
+    conn.execute_batch(
+        "INSERT INTO STIG (id, title) VALUES (1, 'Fixture');
+         INSERT INTO STIGCheck (id, STIGId, DISAId, Severity)
+             VALUES (1, 1, 'SV-222393r1_rule', 'medium');
+         INSERT INTO RMFFamily (id, abbr, name) VALUES (1, 'AC', 'Fixture');
+         INSERT INTO RMFControl (id, RMFFamilyId, number, name, description)
+             VALUES (1, 1, 'AC-16', 'Fixture', 'Fixture');
+         INSERT INTO RMFCCI (id, RMFControlId, definition) VALUES (1, 1, 'Fixture');
+         INSERT INTO MapSTIGCheckCCI (STIGCheckId, CCIId) VALUES (1, 1);",
+    )
+    .unwrap();
+    conn.execute("UPDATE STIGCheck SET CWEId = ?1 WHERE id = 1", [cwe])
+        .unwrap();
+    conn.execute("UPDATE Weakness SET STIGCheckId = 1 WHERE id = ?1", [cwe])
+        .unwrap();
+    insert_scored_cves(conn, 668);
+    // Secondary direct mappings must not bypass the existing evidence policy.
+    conn.execute(
+        "INSERT INTO MapVulnerabilityWeakness (VulnerabilityId, WeaknessId, `Primary`)
+         SELECT id, ?1, 0 FROM Vulnerability;",
+        [cwe],
+    )
+    .unwrap();
+    build.publish().unwrap();
+
+    let identifier = format!("CWE-{cwe}");
+    let output = score(&db, &identifier, false);
+    let record = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .from_reader(output.as_bytes())
+        .records()
+        .next()
+        .unwrap()
+        .unwrap();
+    assert_eq!(&record[0], cwe.to_string());
+    assert_eq!(&record[3], expected_vector);
+    assert!(record[8].parse::<f64>().unwrap() > 0.0);
+    assert_eq!(output, score(&db, "SV-222393", false));
+    assert!(score(&db, &identifier, true).contains("3.1: Found 5 CVSS 4.0 CVEs."));
+
+    // Removing just the local edge reproduces the original N/A failure.
+    Connection::open(&db)
+        .unwrap()
+        .execute(
+            "DELETE FROM WeaknessRelationship
+         WHERE source_id = ?1 AND target_id = 668 AND nature = 'ChildOf' AND view_id = 1000",
+            [cwe],
+        )
+        .unwrap();
+    assert!(score(&db, &identifier, false).contains("\"N/A\""));
+}
+
 fn zip_xml(path: &str) -> String {
     let mut archive = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
     let name = archive
@@ -241,7 +324,12 @@ fn full_cwe_v5_and_stigwe_catalogs() {
             "SELECT count(*) FROM Weakness WHERE category = 0 AND view = 0 AND name NOT LIKE 'DEPRECATED%'",
             956,
         ),
-        ("SELECT count(*) FROM WeaknessRelationship", 1622),
+        // 1,622 source relationships plus the two temporary-file overrides.
+        ("SELECT count(*) FROM WeaknessRelationship", 1624),
+        (
+            "SELECT count(*) FROM WeaknessRelationship WHERE source_id IN (378, 379) AND target_id = 668 AND nature = 'ChildOf' AND view_id = 1000",
+            2,
+        ),
         ("SELECT count(*) FROM STIGCheck", 286),
         ("SELECT count(*) FROM STIGCheck WHERE CWEId IS NULL", 0),
         (
